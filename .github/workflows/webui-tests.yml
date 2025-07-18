@@ -79,3 +79,9 @@ jobs:
         run: uv run playwright install chromium
 
       - run: uv run pytest -s tests/api/test_webui_auth.py
+        env:
+          ACME_EMAIL: joe@example.com
+          ACME_PASSWORD: trustno1
+          ACME_LASTNAME: Sixpack
+          ACME_WRONG_PASSWORD: wrongpassword
+          ACME_OTP: 123456

@@ -26,8 +26,8 @@ def test_auth(page: Page, site_url: str, brand_id: str):
     _run_auth(page, site_url, brand_id)
 
 
-@pytest.mark.skip  # TODO: wait for the ACME server implementation
 @pytest.mark.webui
+@pytest.mark.acme
 @pytest.mark.parametrize("brand_id", SPECS_WITH_CHOICE)
 @pytest.mark.parametrize("verification_choice", ["password", "otp"])
 def test_auth_with_choice(page: Page, site_url: str, brand_id: str, verification_choice: str):
@@ -42,7 +42,6 @@ def _run_auth(
     verification_choice: str | None = None,
     passwords: list[str] = [VALID_PASSWORD],
 ):
-    print(f"====== Running auth test for {brand_id} with verification choice {verification_choice}")
     page.goto(f"{site_url}?test=1")
     page.get_by_test_id(f"brand-card_{brand_id}").click()
     page.wait_for_url(f"{site_url}/start/{brand_id}")
@@ -110,7 +109,6 @@ def _run_auth(
     assert success
 
 
-@pytest.mark.skip  # TODO: wait for the ACME server implementation
 @pytest.mark.webui
 @pytest.mark.acme
 def test_auth_with_wrong_password(page: Page, site_url: str):

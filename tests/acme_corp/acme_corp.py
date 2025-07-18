@@ -101,6 +101,14 @@ def index() -> Any:
                         )
                     ),
                 ),
+                Ul(
+                    Li(
+                        A(
+                            "Email then Password/OTP via Raw Selection",
+                            href="/auth/email-then-pass-or-otp",
+                        )
+                    ),
+                ),
                 cls="container",
             )
         ),
