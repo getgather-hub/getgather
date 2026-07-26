@@ -31,8 +31,7 @@ class TestHealthEndpoint:
 
 @pytest.mark.api
 class TestBrowserLifecycle:
-    def __init__(self) -> None:
-        self.browser_ids: list[str] = []
+    browser_ids: list[str] = []
 
     @pytest.fixture(autouse=True)
     def cleanup(self, client: httpx.Client) -> Generator[None, None, None]:
@@ -87,8 +86,7 @@ class TestBrowserListing:
 
 @pytest.mark.api
 class TestAutoStart:
-    def __init__(self) -> None:
-        self.browser_ids: list[str] = []
+    browser_ids: list[str] = []
 
     @pytest.fixture(autouse=True)
     def cleanup(self, client: httpx.Client) -> Generator[None, None, None]:
@@ -121,8 +119,7 @@ class TestAutoStart:
 
 @pytest.mark.api
 class TestListPages:
-    def __init__(self) -> None:
-        self.browser_ids: list[str] = []
+    browser_ids: list[str] = []
 
     @pytest.fixture(autouse=True)
     def cleanup(self, client: httpx.Client) -> Generator[None, None, None]:
@@ -152,8 +149,7 @@ class TestListPages:
 
 @pytest.mark.api
 class TestPageContent:
-    def __init__(self) -> None:
-        self.browser_ids: list[str] = []
+    browser_ids: list[str] = []
 
     @pytest.fixture(autouse=True)
     def cleanup(self, client: httpx.Client) -> Generator[None, None, None]:
