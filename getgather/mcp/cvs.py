@@ -27,7 +27,9 @@ async def get_perscription_history_action(tab: zd.Tab, _) -> dict[str, Any]:
     async def fetch_orders() -> dict[str, Any]:
         orders = None
 
-        await zen_navigate_with_retry(tab, "https://www.cvs.com/pharmacy/rx/prescriptions", wait_for_ready=False)
+        await zen_navigate_with_retry(
+            tab, "https://www.cvs.com/pharmacy/rx/prescriptions", wait_for_ready=False
+        )
         orders = await tab.evaluate(
             f"""
                 (async () => {{
