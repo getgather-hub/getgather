@@ -1115,16 +1115,6 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
                         dispatchClick(element);
                         output[key] = true;
                     }}
-                }} else if (kind === "press_enter") {{
-                    element.focus();
-                    for (const type of ["keydown", "keypress", "keyup"]) {{
-                        element.dispatchEvent(new KeyboardEvent(type, {{
-                            key: "Enter",
-                            code: "Enter",
-                            bubbles: true,
-                        }}));
-                    }}
-                    output[key] = true;
                 }} else if (kind === "set_value") {{
                     const value = typeof action?.value === "string" ? action.value : "";
                     const requestedDelay = Number(action?.typing_delay_ms);
