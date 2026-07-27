@@ -385,7 +385,7 @@ async def distill_post_loop(
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
         )
         trusted_actions = (
-            isinstance(html_element, Tag) and "gg-trusted-actions" in html_element.attrs
+            isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
         )
 
         if match.distilled == current.distilled:
