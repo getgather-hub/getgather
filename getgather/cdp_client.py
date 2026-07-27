@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Any, cast
 
+import httpx
 import websockets
 import websockets.asyncio.client
 
@@ -22,10 +23,22 @@ class PageAttachError(CDPError):
     """Raised when attaching to a page target fails."""
 
 
+class BrowserNotFoundError(CDPError):
+    """Raised when the browser genuinely does not exist in Chrome Fleet."""
+
+
 async def open_cdp(browser_id: str) -> "CDPClient":
-    """Locate the browser and return a connected CDP client. Raises if the
-    browser is not found or the websocket cannot be opened."""
-    cdp_websocket_url = await get_remote_browser_cdp_url(browser_id)
+    """Locate the browser and return a connected CDP client. Raises
+    BrowserNotFoundError if the browser genuinely does not exist, or CDPError
+    if resolving/connecting fails transiently."""
+    try:
+        cdp_websocket_url = await get_remote_browser_cdp_url(browser_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise BrowserNotFoundError(f"Browser {browser_id} not found") from e
+        raise CDPError(f"ChromeFleet error resolving {browser_id}: {e}") from e
+    except Exception as e:
+        raise CDPError(f"Failed to resolve browser {browser_id}: {e}") from e
     ws = await websockets.connect(
         cdp_websocket_url,
         open_timeout=settings.CHROMEFLEET_CDP_OPEN_TIMEOUT_SECONDS,
