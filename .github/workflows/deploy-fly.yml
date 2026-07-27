@@ -1,15 +1,8 @@
 name: Deploy to Fly.io
 
-# TEMPORARY: the pull_request trigger below is for testing the browserbase deploy ahead of
-# merge (#1418) and should be removed once that's confirmed working — pull_request fires for
-# every PR in this repo, and on push/pull_request the workflow_dispatch `inputs` context doesn't
-# exist, so without the explicit event_name check below prepare-matrix's "empty selection falls
-# back to deploying everything" default would redeploy demo/dev/daytona on every PR too, not just
-# browserbase.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
     inputs:
       demo:
@@ -51,7 +44,7 @@ jobs:
             ${{ inputs.demo        && 'demo'        || '' }}
             ${{ inputs.dev         && 'dev'         || '' }}
             ${{ inputs.daytona     && 'daytona'     || '' }}
-            ${{ (inputs.browserbase || github.event_name == 'pull_request') && 'browserbase' || '' }}
+            ${{ inputs.browserbase && 'browserbase' || '' }}
           key-field: env
 
   deploy:
