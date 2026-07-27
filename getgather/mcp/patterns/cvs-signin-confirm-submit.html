@@ -24,10 +24,15 @@
       type="text"
       data-testid="otp"
       rb-match="input#boxOne"
+      gg-submit-enter
       placeholder="Code"
     />
 
-    <button type="submit" data-testid="submit" rb-match="button#verifyButtonID">
+    <button
+      type="submit"
+      data-testid="submit"
+      rb-match="app-verify button#verifyButtonID:not([disabled])"
+    >
       Confirm code
     </button>
   </body>

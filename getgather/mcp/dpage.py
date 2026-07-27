@@ -384,6 +384,9 @@ async def distill_post_loop(
         element_config = (
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
         )
+        trusted_actions = (
+            isinstance(html_element, Tag) and "gg-trusted-actions" in html_element.attrs
+        )
 
         if match.distilled == current.distilled:
             logger.info(f"Still the same: {match.name}")
@@ -533,13 +536,26 @@ async def distill_post_loop(
                         names.append(name_str)
                         input["value"] = value
                         current.distilled = str(document)
-                        pending_actions.append({
-                            "key": f"set:{name}:{len(pending_actions)}",
-                            "kind": "set_value",
-                            "selector": str(selector),
-                            "value": str(value),
-                            "action_delay_ms": str(action_delay_ms),
-                        })
+                        if trusted_actions and input_type not in ("checkbox", "radio"):
+                            text_element = await page_query_selector(
+                                page,
+                                selector if selector is not None else "",
+                                iframe_selector=frame_selector,
+                                config=element_config,
+                            )
+                            if text_element:
+                                await text_element.type_text(str(value))
+                                await asyncio.sleep(0.25)
+                            else:
+                                logger.warning(f"Trusted fill could not find {selector}")
+                        else:
+                            pending_actions.append({
+                                "key": f"set:{name}:{len(pending_actions)}",
+                                "kind": "set_value",
+                                "selector": str(selector),
+                                "value": str(value),
+                                "action_delay_ms": str(action_delay_ms),
+                            })
                         del fields[name_str]
                     else:
                         logger.info(f"No form data found for {name}")
@@ -555,20 +571,61 @@ async def distill_post_loop(
                     "selector": str(auto_click_selector),
                 })
 
+        submit_enter_selectors: list[str] = []
+        for input in inputs:
+            if not isinstance(input, Tag) or "gg-submit-enter" not in input.attrs:
+                continue
+            name = input.get("name")
+            if name is None or str(name) not in names:
+                continue
+            gg_match = get_match_attr(input)
+            selector, _ = get_selector(str(gg_match) if gg_match is not None else "")
+            if selector:
+                submit_enter_selectors.append(str(selector))
+
         should_submit = False
-        SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
+        SUBMIT_BUTTON = (
+            "button[rb-autoclick], button[gg-autoclick], button[type=submit], button[type=button]"
+        )
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
-                logger.info("Submitting form, all fields are filled...")
-                for submit_button in document.select(SUBMIT_BUTTON):
-                    submit_selector, _ = get_selector(str(get_match_attr(submit_button)))
-                    if submit_selector:
+                if submit_enter_selectors:
+                    logger.info("Submitting form via Enter key, all fields are filled...")
+                    for selector in submit_enter_selectors:
                         pending_actions.append({
-                            "key": f"click:submit:{len(pending_actions)}",
-                            "kind": "click",
-                            "selector": str(submit_selector),
+                            "key": f"press_enter:{len(pending_actions)}",
+                            "kind": "press_enter",
+                            "selector": selector,
                             "action_delay_ms": str(action_delay_ms),
                         })
+                else:
+                    logger.info("Submitting form, all fields are filled...")
+                    for submit_button in document.select(SUBMIT_BUTTON):
+                        submit_selector, frame_selector = get_selector(
+                            str(get_match_attr(submit_button))
+                        )
+                        if not submit_selector:
+                            continue
+                        if trusted_actions:
+                            submit_element = await page_query_selector(
+                                page,
+                                submit_selector,
+                                iframe_selector=frame_selector,
+                                config=element_config,
+                            )
+                            if submit_element:
+                                logger.info(f"Trusted CDP mouse click on {submit_selector}")
+                                await submit_element.element.mouse_click()
+                                await asyncio.sleep(0.25)
+                            else:
+                                logger.warning(f"Trusted submit could not find {submit_selector}")
+                        else:
+                            pending_actions.append({
+                                "key": f"click:submit:{len(pending_actions)}",
+                                "kind": "click",
+                                "selector": str(submit_selector),
+                                "action_delay_ms": str(action_delay_ms),
+                            })
                 should_submit = True
             else:
                 logger.warning("Not all form fields are filled")
@@ -599,6 +656,39 @@ async def distill_post_loop(
                 try:
                     if kind == "click":
                         await element.click()
+                    elif kind == "press_enter":
+                        escaped_selector = selector.replace("\\", "\\\\").replace('"', '\\"')
+                        await page.evaluate(
+                            f"""
+                            (() => {{
+                                function findCss(sel, doc) {{
+                                    try {{
+                                        const direct = doc.querySelector(sel);
+                                        if (direct) return direct;
+                                    }} catch (e) {{}}
+                                    for (const iframe of doc.querySelectorAll("iframe")) {{
+                                        try {{
+                                            const childDoc = iframe.contentDocument || iframe.contentWindow.document;
+                                            const nested = findCss(sel, childDoc);
+                                            if (nested) return nested;
+                                        }} catch (e) {{}}
+                                    }}
+                                    return null;
+                                }}
+                                const el = findCss("{escaped_selector}", document);
+                                if (!el) return false;
+                                el.focus();
+                                for (const type of ["keydown", "keypress", "keyup"]) {{
+                                    el.dispatchEvent(new KeyboardEvent(type, {{
+                                        key: "Enter",
+                                        code: "Enter",
+                                        bubbles: true,
+                                    }}));
+                                }}
+                                return true;
+                            }})()
+                            """
+                        )
                     elif kind == "set_value":
                         value = pending_action.get("value")
                         await element.type_text(value if isinstance(value, str) else "")

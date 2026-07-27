@@ -1,0 +1,49 @@
+<html rb-domain="cvs" gg-trusted-actions>
+  <head>
+    <title>Sign In to CVS</title>
+  </head>
+
+  <body>
+    <h1
+      rb-match="h1#headerIndex"
+      style="display: inline; font-size: 1rem; font-weight: 600; margin: 0"
+    >
+      Enter date of birth
+    </h1>
+    <p rb-match="div#subHeader" style="display: inline"></p>
+
+    <div rb-optional rb-match="ps-alert-bar div[slot='heading']"></div>
+
+    <input
+      name="month"
+      type="text"
+      data-testid="month"
+      rb-match="input#month"
+      placeholder="Month"
+    />
+
+    <input
+      name="day"
+      type="text"
+      data-testid="day"
+      rb-match="input#day"
+      placeholder="Day"
+    />
+
+    <input
+      name="year"
+      type="text"
+      data-testid="year"
+      rb-match="input#year"
+      placeholder="Year"
+    />
+
+    <button
+      type="submit"
+      data-testid="submit"
+      rb-match="form.form-container button[data-test='continue']"
+    >
+      Verify date of birth
+    </button>
+  </body>
+</html>

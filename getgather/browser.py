@@ -1023,10 +1023,23 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
                 if (typingDelayMs > 0) await sleep(typingDelayMs);
             }}
             el.dispatchEvent(new Event("change", {{ bubbles: true }}));
+            el.dispatchEvent(new Event("blur", {{ bubbles: true }}));
+        }}
+
+        function dispatchClick(el) {{
+            el.scrollIntoView({{ block: "center" }});
+            el.dispatchEvent(new PointerEvent("pointerdown", {{ bubbles: true, composed: true }}));
+            el.dispatchEvent(new PointerEvent("pointerup", {{ bubbles: true, composed: true }}));
+            el.dispatchEvent(new MouseEvent("click", {{
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window,
+            }}));
         }}
 
         async function setValueWithPoll(selector, value, typingDelayMs, timeout) {{
-            const el = document.querySelector(selector);
+            const el = findCss(selector, document);
             if (!el) return {{ success: false, reason: "element not found" }};
             await fillInput(el, value, typingDelayMs);
 
@@ -1035,7 +1048,7 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
             const deadline = Date.now() + timeout;
             while (Date.now() < deadline) {{
                 await sleep(50);
-                const inputEl = document.querySelector(selector);
+                const inputEl = findCss(selector, document);
                 if (!inputEl) {{ stableCount = 0; continue; }}
                 if (inputEl.value !== value) {{
                     stableCount = 0;
@@ -1096,7 +1109,21 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
 
             try {{
                 if (kind === "click") {{
-                    element.click();
+                    if (element.disabled || element.getAttribute("aria-disabled") === "true") {{
+                        output[key] = false;
+                    }} else {{
+                        dispatchClick(element);
+                        output[key] = true;
+                    }}
+                }} else if (kind === "press_enter") {{
+                    element.focus();
+                    for (const type of ["keydown", "keypress", "keyup"]) {{
+                        element.dispatchEvent(new KeyboardEvent(type, {{
+                            key: "Enter",
+                            code: "Enter",
+                            bubbles: true,
+                        }}));
+                    }}
                     output[key] = true;
                 }} else if (kind === "set_value") {{
                     const value = typeof action?.value === "string" ? action.value : "";
