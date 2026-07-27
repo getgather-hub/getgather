@@ -376,11 +376,16 @@ async def distill_post_loop(
         inputs = document.find_all("input")
         pending_actions: list[dict[str, str]] = []
         html_element = document.find("html")
-        action_delay_ms = (
-            int(str(html_element.get("gg-action-delay") or 0))
-            if isinstance(html_element, Tag)
-            else 0
-        )
+        action_delay_ms = 0
+        if isinstance(html_element, Tag):
+            for delay_attr in ("rb-action-delay", "gg-action-delay"):
+                raw_delay = html_element.get(delay_attr)
+                if raw_delay is not None:
+                    try:
+                        action_delay_ms = int(str(raw_delay))
+                    except ValueError:
+                        action_delay_ms = 0
+                    break
         element_config = (
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
         )
