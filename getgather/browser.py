@@ -1097,12 +1097,8 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
 
             try {{
                 if (kind === "click") {{
-                    if (element.disabled || element.getAttribute("aria-disabled") === "true") {{
-                        output[key] = false;
-                    }} else {{
-                        element.click();
-                        output[key] = true;
-                    }}
+                    element.click();
+                    output[key] = true;
                 }} else if (kind === "set_value") {{
                     const value = typeof action?.value === "string" ? action.value : "";
                     const requestedDelay = Number(action?.typing_delay_ms);
