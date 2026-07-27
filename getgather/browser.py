@@ -1026,18 +1026,6 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
             el.dispatchEvent(new Event("blur", {{ bubbles: true }}));
         }}
 
-        function dispatchClick(el) {{
-            el.scrollIntoView({{ block: "center" }});
-            el.dispatchEvent(new PointerEvent("pointerdown", {{ bubbles: true, composed: true }}));
-            el.dispatchEvent(new PointerEvent("pointerup", {{ bubbles: true, composed: true }}));
-            el.dispatchEvent(new MouseEvent("click", {{
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window,
-            }}));
-        }}
-
         async function setValueWithPoll(selector, value, typingDelayMs, timeout) {{
             const el = findCss(selector, document);
             if (!el) return {{ success: false, reason: "element not found" }};
@@ -1112,7 +1100,7 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
                     if (element.disabled || element.getAttribute("aria-disabled") === "true") {{
                         output[key] = false;
                     }} else {{
-                        dispatchClick(element);
+                        element.click();
                         output[key] = true;
                     }}
                 }} else if (kind === "set_value") {{
