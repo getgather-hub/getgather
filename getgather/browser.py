@@ -1027,7 +1027,7 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
         }}
 
         async function setValueWithPoll(selector, value, typingDelayMs, timeout) {{
-            const el = findCss(selector, document);
+            const el = document.querySelector(selector);
             if (!el) return {{ success: false, reason: "element not found" }};
             await fillInput(el, value, typingDelayMs);
 
@@ -1036,7 +1036,7 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
             const deadline = Date.now() + timeout;
             while (Date.now() < deadline) {{
                 await sleep(50);
-                const inputEl = findCss(selector, document);
+                const inputEl = document.querySelector(selector);
                 if (!inputEl) {{ stableCount = 0; continue; }}
                 if (inputEl.value !== value) {{
                     stableCount = 0;
