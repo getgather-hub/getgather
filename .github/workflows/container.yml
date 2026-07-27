@@ -8,28 +8,21 @@ on:
 
 jobs:
   # Secrets can't be referenced in a job-level `if`, so we emit a flag as a job output and use it
-  # in the daytona/browserbase jobs' `if` condition via the needs context.
+  # in the daytona job's `if` condition via the needs context.
   setup:
     runs-on: ubuntu-24.04
     outputs:
       run_daytona: ${{ steps.check.outputs.run_daytona }}
-      run_browserbase: ${{ steps.check.outputs.run_browserbase }}
     steps:
-      - name: Check backend API keys
+      - name: Check Daytona API key
         id: check
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
         run: |
           if [ -n "$DAYTONA_API_KEY" ]; then
             echo 'run_daytona=true' >> "$GITHUB_OUTPUT"
           else
             echo 'run_daytona=false' >> "$GITHUB_OUTPUT"
-          fi
-          if [ -n "$BROWSERBASE_API_KEY" ]; then
-            echo 'run_browserbase=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'run_browserbase=false' >> "$GITHUB_OUTPUT"
           fi
 
   built-in:
@@ -141,23 +134,3 @@ jobs:
             -e DAYTONA_API_KEY=${{ secrets.DAYTONA_API_KEY }}
             -e DAYTONA_API_URL=${{ vars.DAYTONA_API_URL }}
             -e DAYTONA_SNAPSHOT=${{ vars.DAYTONA_SNAPSHOT }}
-
-  browserbase:
-    needs: setup
-    if: ${{ needs.setup.outputs.run_browserbase == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: remotebrowser/shared-github-actions/container-health-check@v1
-        with:
-          image-name: remotebrowser
-          health-checks: |
-            {"url": "http://localhost:23456/health"}
-            {"url": "http://localhost:23456/extended-health"}
-          health-timeout-seconds: 180
-          extra-config: |-
-            --network host
-            -e BROWSER_BACKEND=browserbase
-            -e BROWSERBASE_API_KEY=${{ secrets.BROWSERBASE_API_KEY }}

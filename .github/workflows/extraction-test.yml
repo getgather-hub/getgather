@@ -1,10 +1,9 @@
 name: Extraction Tests
 
 # Runs the extraction (distillation REST API) suite against each browser backend. The daytona leg
-# talks to a self-hosted Daytona server on a Tailscale network and creates real sandboxes; the
-# browserbase leg talks to the real Browserbase API. Configure under Settings -> Secrets and
-# variables -> Actions:
-#   Secrets:   DAYTONA_API_KEY, TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET, BROWSERBASE_API_KEY
+# talks to a self-hosted Daytona server on a Tailscale network and creates real sandboxes;
+# configure under Settings -> Secrets and variables -> Actions:
+#   Secrets:   DAYTONA_API_KEY, TS_OAUTH_CLIENT_ID, TS_OAUTH_SECRET
 #   Variables: DAYTONA_API_URL (e.g. http://100.89.25.69:3000/api), DAYTONA_SNAPSHOT
 
 on:
@@ -14,9 +13,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Build the backend matrix dynamically: the daytona/browserbase choices are only included when
-  # their API key is configured. Secrets can't be referenced in a matrix or job-level `if`, so we
-  # emit the backend list as a job output and feed it into the downstream matrices via fromJSON.
+  # Build the backend matrix dynamically: the daytona choice is only included when DAYTONA_API_KEY is
+  # configured. Secrets can't be referenced in a matrix or job-level `if`, so we emit the backend
+  # list as a job output and feed it into the downstream matrices via fromJSON.
   setup:
     runs-on: ubuntu-24.04
     outputs:
@@ -26,16 +25,12 @@ jobs:
         id: backends
         env:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
         run: |
-          backends='["podman"]'
           if [ -n "$DAYTONA_API_KEY" ]; then
-            backends=$(echo "$backends" | jq -c '. + ["daytona"]')
+            echo 'browser_backends=["podman","daytona"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'browser_backends=["podman"]' >> "$GITHUB_OUTPUT"
           fi
-          if [ -n "$BROWSERBASE_API_KEY" ]; then
-            backends=$(echo "$backends" | jq -c '. + ["browserbase"]')
-          fi
-          echo "browser_backends=$backends" >> "$GITHUB_OUTPUT"
 
   extraction-tests-uv:
     needs: setup
@@ -50,7 +45,6 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
-      BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -100,7 +94,6 @@ jobs:
       DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
       DAYTONA_API_URL: ${{ vars.DAYTONA_API_URL }}
       DAYTONA_SNAPSHOT: ${{ vars.DAYTONA_SNAPSHOT }}
-      BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
