@@ -577,9 +577,7 @@ async def distill_post_loop(
                 })
 
         should_submit = False
-        SUBMIT_BUTTON = (
-            "button[rb-autoclick], button[gg-autoclick], button[type=submit], button[type=button]"
-        )
+        SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
                 logger.info("Submitting form, all fields are filled...")
