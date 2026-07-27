@@ -8,7 +8,7 @@ from loguru import logger
 
 from getgather.browser import find_browser_tab, get_remote_browser
 from getgather.browsers.router import strip_browser_id_from_target_id
-from getgather.cdp_client import PageNotFoundError, open_cdp
+from getgather.cdp_client import BrowserNotFoundError, CDPError, PageNotFoundError, open_cdp
 from getgather.mcp.dpage import distill_post_loop
 from getgather.zen_distill import (
     convert,
@@ -24,8 +24,12 @@ router = APIRouter()
 async def list_pages(browser_id: str) -> JSONResponse:
     try:
         client = await open_cdp(browser_id)
-    except Exception:
+    except BrowserNotFoundError:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found!")
+    except CDPError as e:
+        raise HTTPException(
+            status_code=503, detail=f"Browser {browser_id} temporarily unavailable: {e}"
+        )
 
     try:
         result = await client.send("Target.getTargets")
@@ -45,8 +49,12 @@ async def get_page_html(browser_id: str, page_id: str) -> HTMLResponse:
     page_id = strip_browser_id_from_target_id(page_id)
     try:
         client = await open_cdp(browser_id)
-    except Exception:
+    except BrowserNotFoundError:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found!")
+    except CDPError as e:
+        raise HTTPException(
+            status_code=503, detail=f"Browser {browser_id} temporarily unavailable: {e}"
+        )
 
     try:
         try:
@@ -75,8 +83,12 @@ async def get_page_distilled(browser_id: str, page_id: str) -> JSONResponse | HT
     page_id = strip_browser_id_from_target_id(page_id)
     try:
         client = await open_cdp(browser_id)
-    except Exception:
+    except BrowserNotFoundError:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found!")
+    except CDPError as e:
+        raise HTTPException(
+            status_code=503, detail=f"Browser {browser_id} temporarily unavailable: {e}"
+        )
 
     try:
         try:
@@ -162,8 +174,12 @@ async def navigate_page(
     page_id = strip_browser_id_from_target_id(page_id)
     try:
         client = await open_cdp(browser_id)
-    except Exception:
+    except BrowserNotFoundError:
         raise HTTPException(status_code=404, detail=f"Browser {browser_id} not found!")
+    except CDPError as e:
+        raise HTTPException(
+            status_code=503, detail=f"Browser {browser_id} temporarily unavailable: {e}"
+        )
 
     try:
         try:
