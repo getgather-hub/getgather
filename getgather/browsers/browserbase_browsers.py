@@ -394,4 +394,18 @@ class BrowserbaseBackend:
         return None
 
     async def get_live_view_url(self, browser_id: str) -> str | None:
-        return None
+        if browser_id not in self._sessions:
+            return None
+        headers = {"x-bb-api-key": _api_key()}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                response = await client.get(
+                    f"{BROWSERBASE_API_URL}/{browser_id}/debug", headers=headers
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as e:
+                logger.warning(f"Browserbase live view lookup failed for {browser_id}: {e}")
+                return None
+        data: dict[str, Any] = response.json()
+        url: Any = data.get("debuggerFullscreenUrl")  # pyright: ignore[reportUnknownMemberType]
+        return url if isinstance(url, str) else None
