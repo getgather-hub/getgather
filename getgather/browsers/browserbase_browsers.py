@@ -394,10 +394,6 @@ class BrowserbaseBackend:
         return None
 
     async def get_live_view_url(self, browser_id: str) -> str | None:
-        # Browserbase has no VNC port; it serves its own hosted debugger UI instead. `debug`
-        # returns a fullscreen iframe-able URL for the whole browser (as opposed to `pages[].
-        # debuggerFullscreenUrl`, which is per-tab) — good enough for the single-page flows this
-        # router drives.
         if browser_id not in self._sessions:
             return None
         headers = {"x-bb-api-key": _api_key()}
