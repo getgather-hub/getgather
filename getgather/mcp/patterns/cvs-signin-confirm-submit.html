@@ -1,0 +1,31 @@
+<html rb-domain="cvs" rb-trusted-actions>
+  <head>
+    <title>Sign In to CVS</title>
+  </head>
+
+  <body>
+    <div style="text-align: center; margin-bottom: 1rem">
+      <h1
+        rb-match="h1#header2"
+        style="display: inline; font-size: 1rem; font-weight: 600; margin: 0"
+      >
+        Enter the passcode we sent to
+      </h1>
+      <p rb-match="p.subheader" style="display: inline; margin: 0 0 0 0.25em"></p>
+    </div>
+
+    <div rb-optional rb-match="ps-alert-bar div[slot='heading']"></div>
+
+    <p rb-match="label[for='boxOne']"></p>
+
+    <input name="code" type="text" data-testid="otp" rb-match="input#boxOne" placeholder="Code" />
+
+    <button
+      type="submit"
+      data-testid="submit"
+      rb-match="app-verify button#verifyButtonID:not([disabled])"
+    >
+      Confirm code
+    </button>
+  </body>
+</html>

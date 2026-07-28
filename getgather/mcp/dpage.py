@@ -377,12 +377,15 @@ async def distill_post_loop(
         pending_actions: list[dict[str, str]] = []
         html_element = document.find("html")
         action_delay_ms = (
-            int(str(html_element.get("gg-action-delay") or 0))
+            int(str(html_element.get("rb-action-delay") or 0))
             if isinstance(html_element, Tag)
             else 0
         )
         element_config = (
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
+        )
+        trusted_actions = (
+            isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
         )
 
         if match.distilled == current.distilled:
@@ -533,13 +536,26 @@ async def distill_post_loop(
                         names.append(name_str)
                         input["value"] = value
                         current.distilled = str(document)
-                        pending_actions.append({
-                            "key": f"set:{name}:{len(pending_actions)}",
-                            "kind": "set_value",
-                            "selector": str(selector),
-                            "value": str(value),
-                            "action_delay_ms": str(action_delay_ms),
-                        })
+                        if trusted_actions and input_type not in ("checkbox", "radio"):
+                            text_element = await page_query_selector(
+                                page,
+                                selector if selector is not None else "",
+                                iframe_selector=frame_selector,
+                                config=element_config,
+                            )
+                            if text_element:
+                                await text_element.type_text(str(value))
+                                await asyncio.sleep(0.25)
+                            else:
+                                logger.warning(f"Trusted fill could not find {selector}")
+                        else:
+                            pending_actions.append({
+                                "key": f"set:{name}:{len(pending_actions)}",
+                                "kind": "set_value",
+                                "selector": str(selector),
+                                "value": str(value),
+                                "action_delay_ms": str(action_delay_ms),
+                            })
                         del fields[name_str]
                     else:
                         logger.info(f"No form data found for {name}")
@@ -561,8 +577,25 @@ async def distill_post_loop(
             if len(names) > 0 and expected_field_count == len(names):
                 logger.info("Submitting form, all fields are filled...")
                 for submit_button in document.select(SUBMIT_BUTTON):
-                    submit_selector, _ = get_selector(str(get_match_attr(submit_button)))
-                    if submit_selector:
+                    submit_selector, frame_selector = get_selector(
+                        str(get_match_attr(submit_button))
+                    )
+                    if not submit_selector:
+                        continue
+                    if trusted_actions:
+                        submit_element = await page_query_selector(
+                            page,
+                            submit_selector,
+                            iframe_selector=frame_selector,
+                            config=element_config,
+                        )
+                        if submit_element:
+                            logger.info(f"Trusted CDP mouse click on {submit_selector}")
+                            await submit_element.element.mouse_click()
+                            await asyncio.sleep(0.25)
+                        else:
+                            logger.warning(f"Trusted submit could not find {submit_selector}")
+                    else:
                         pending_actions.append({
                             "key": f"click:submit:{len(pending_actions)}",
                             "kind": "click",

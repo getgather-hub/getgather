@@ -15,12 +15,15 @@ PATTERNS_DIR = Path(__file__).resolve().parent.parent / "getgather" / "mcp" / "p
 
 EXACT_TESTIDS = {
     "answer",  # security question answer
+    "day",  # date-of-birth day field
     "email",  # field that accepts an email address only
+    "month",  # date-of-birth month field
     "otp",  # single verification-code field
     "password",
     "phone",
     "submit",  # the primary submit/continue button of the form
     "username",  # combo identifier field (email or phone/username/member number)
+    "year",  # date-of-birth year field
     "zip-code",
 }
 TESTID_REGEXES = [

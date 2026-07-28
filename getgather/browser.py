@@ -1023,6 +1023,7 @@ async def page_batch_actions(page: zd.Tab, actions: list[dict[str, str]]) -> dic
                 if (typingDelayMs > 0) await sleep(typingDelayMs);
             }}
             el.dispatchEvent(new Event("change", {{ bubbles: true }}));
+            el.dispatchEvent(new Event("blur", {{ bubbles: true }}));
         }}
 
         async function setValueWithPoll(selector, value, typingDelayMs, timeout) {{

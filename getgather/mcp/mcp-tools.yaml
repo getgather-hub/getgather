@@ -219,6 +219,18 @@
     - function_name: get_orders_with_pagination
       description: Get the order history from a user's Doordash account with pagination.
 
+
+
+- id: cvs
+  name: CVS MCP
+  custom: true
+  module: cvs
+  tools:
+    - function_name: signin
+      description: Signin to a user's CVS account.
+    - function_name: get_perscription_history
+      description: Get the perscription history from a user's CVS account.
+
 - id: ebay
   name: Ebay MCP
   tools:
