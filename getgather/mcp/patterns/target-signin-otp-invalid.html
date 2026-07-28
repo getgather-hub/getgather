@@ -1,0 +1,21 @@
+<html rb-domain="target">
+  <head>
+    <title>Target Sign In - OTP Invalid</title>
+  </head>
+  <body>
+    <div
+      rb-match="//div[contains(@class, 'styles_content__') and contains(text(), 'That code is invalid. Please try again.')]"
+    >
+      That code is invalid. Please try again.
+    </div>
+    <input
+      autofocus
+      name="otp"
+      type="tel"
+      placeholder="Enter your code"
+      data-testid="otp"
+      rb-match="input.styles_input__8Dfzg"
+    />
+    <button type="submit" data-testid="submit" rb-match="button#verify">Verify</button>
+  </body>
+</html>
