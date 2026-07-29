@@ -571,6 +571,14 @@
     - function_name: get_order_history
       description: Get order history from a user's Walmart account.
 
+- id: walgreens
+  name: Walgreens MCP
+  custom: true
+  module: walgreens
+  tools:
+    - function_name: get_purchases
+      description: Get online order history from a user's Walgreens account.
+
 - id: youtube
   name: YouTube MCP
   custom: true

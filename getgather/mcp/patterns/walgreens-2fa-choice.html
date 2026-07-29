@@ -1,0 +1,36 @@
+<html rb-domain="walgreens" rb-priority="2">
+  <head>
+    <title>Walgreens Verification Method</title>
+  </head>
+  <body>
+    <div class="vertical-radios">
+      <div class="radio-wrapper">
+        <input
+          type="radio"
+          name="verificationMethod"
+          id="email"
+          data-testid="signin-method-email"
+          rb-match="input#radio-email-0"
+          value="email"
+          checked
+        />
+        <label rb-optional for="email" rb-match="label[for=radio-email-0]">Email</label>
+      </div>
+      <div class="radio-wrapper">
+        <input
+          rb-optional
+          type="radio"
+          name="verificationMethod"
+          id="phone"
+          data-testid="signin-method-sms"
+          rb-match="input#radio-phone-0"
+          value="phone"
+        />
+        <label rb-optional for="phone" rb-match="label[for=radio-phone-0]">Text message</label>
+      </div>
+    </div>
+    <button type="submit" data-testid="submit" rb-match="button#btn_send_verify_code">
+      Continue
+    </button>
+  </body>
+</html>
