@@ -9,7 +9,7 @@ from loguru import logger
 from getgather.browser import find_browser_tab, get_remote_browser
 from getgather.browsers.router import strip_browser_id_from_target_id
 from getgather.cdp_client import BrowserNotFoundError, CDPError, PageNotFoundError, open_cdp
-from getgather.mcp.dpage import distill_post_loop
+from getgather.mcp.dpage import distill_post_loop, render_outcome
 from getgather.zen_distill import (
     convert,
     distill,
@@ -155,8 +155,10 @@ async def post_page_distill(
     logger.info(f"POST /distill for browser: {browser_id}  page: {page_id}")
     form_data = await request.form()
     fields: dict[str, str] = {k: str(v) for k, v in form_data.items()}
+    button = fields.pop("button", None)
     action = f"/api/v1/browsers/{browser_id}/pages/{page_id}/distill"
-    return await distill_post_loop(page, page_id, fields, action, timeout=15)
+    outcome = await distill_post_loop(page, page_id, fields, button=button, timeout=15)
+    return render_outcome(outcome, action)
 
 
 @router.post("/api/v1/browsers/{browser_id}/pages/{page_id}/navigate")

@@ -5,7 +5,7 @@ import re
 import socket
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import zendriver as zd
 from bs4 import BeautifulSoup, Tag
@@ -30,6 +30,7 @@ from getgather.browser import (
     zen_navigate_with_retry,
 )
 from getgather.config import settings
+from getgather.mcp.form_schema import SigninState, SigninSubmission, parse_blocks
 from getgather.mcp.html_renderer import DEFAULT_TITLE, render_form
 from getgather.zen_distill import (
     Match,
@@ -52,6 +53,12 @@ router = APIRouter(prefix="/dpage", tags=["dpage"])
 
 # Max seconds for the distillation polling loop in zen_post_dpage (per HTTP request).
 DEFAULT_DPAGE_POST_POLL_TIMEOUT = 60
+
+# Reading the current step submits nothing and re-distilling is idempotent, so a read can poll
+# briefly and let the client retry instead of occupying a request slot for a full minute. Each
+# in-flight request holds one of the machine's connection slots (fly.toml sets soft_limit = 20),
+# which is the real ceiling on concurrent sign-ins.
+DEFAULT_DPAGE_READ_POLL_TIMEOUT = 5
 
 FRIENDLY_CHARS: str = "23456789abcdefghijkmnpqrstuvwxyz"
 
@@ -278,8 +285,64 @@ async def get_dpage(id: str | None = None) -> HTMLResponse:
 FINISHED_MSG = "Finished! You can close this window now."
 
 
-@router.post("/{id}", response_class=HTMLResponse)
-async def post_dpage(id: str, request: Request) -> HTMLResponse:
+@dataclass
+class LoopOutcome:
+    """What one `distill_post_loop` pass concluded, before it is projected to HTML or JSON.
+
+    Keeping the loop's result structural is what lets the same engine serve the browser-facing
+    dpage and the JSON API without either one re-parsing the other's output.
+    """
+
+    kind: Literal["need_input", "finished", "timeout"]
+    title: str = DEFAULT_TITLE
+    document: BeautifulSoup | None = None
+    error_code: str | None = None
+
+
+def render_outcome(outcome: LoopOutcome, action: str) -> HTMLResponse:
+    """Project an outcome to the browser-facing dpage, preserving pre-JSON behaviour exactly."""
+    if outcome.kind == "timeout":
+        raise HTTPException(status_code=503, detail="Timeout reached")
+
+    options: dict[str, str] = {"title": outcome.title, "action": action}
+
+    if outcome.kind == "finished":
+        if outcome.error_code is not None:
+            options["error_code"] = outcome.error_code
+        return HTMLResponse(render(FINISHED_MSG, options))
+
+    body = outcome.document.find("body") if outcome.document is not None else None
+    return HTMLResponse(render(str(body), options))
+
+
+def signin_state(outcome: LoopOutcome, signin_id: str) -> SigninState:
+    """Project an outcome to JSON.
+
+    Note the HTML path treats an `rb-error` pattern as merely "finished" so that polling stops;
+    here that splits into ERROR vs SUCCESS on the presence of an error code, which is the
+    distinction consumers currently rebuild by keyword-matching the rendered page.
+    """
+    if outcome.kind == "timeout":
+        # Deliberately not a 503: a JSON client cannot tell our 503 apart from a proxy killing
+        # the connection.
+        return SigninState(status="TIMEOUT", signin_id=signin_id, title=outcome.title)
+
+    if outcome.kind == "finished":
+        return SigninState(
+            status="ERROR" if outcome.error_code is not None else "SUCCESS",
+            signin_id=signin_id,
+            title=outcome.title,
+            error_code=outcome.error_code,
+        )
+
+    blocks = parse_blocks(outcome.document) if outcome.document is not None else []
+    return SigninState(
+        status="NEED_SIGNIN", signin_id=signin_id, title=outcome.title, blocks=blocks
+    )
+
+
+async def _resolve_signin_page(request: Request) -> zd.Tab:
+    """Resolve the remote tab a sign-in id points at."""
     signin_id = SignInId.from_request(request)
     if signin_id is None:
         raise HTTPException(status_code=400, detail="Missing or invalid sign-in id")
@@ -292,7 +355,33 @@ async def post_dpage(id: str, request: Request) -> HTMLResponse:
     if page is None:
         raise HTTPException(status_code=404, detail="Page not found")
 
+    return page
+
+
+@router.post("/{id}", response_class=HTMLResponse)
+async def post_dpage(id: str, request: Request) -> HTMLResponse:
+    page = await _resolve_signin_page(request)
     return await zen_post_dpage(page, id, request)
+
+
+# Unlike GET /dpage/{id}, which only serves an auto-submit trampoline because a browser cannot
+# redirect GET to POST, this returns the current step directly. It submits nothing, so it polls
+# briefly and returns TIMEOUT for the client to retry rather than holding a slot for a minute.
+@router.get("/{id}/json")
+async def get_dpage_json(id: str, request: Request) -> SigninState:
+    page = await _resolve_signin_page(request)
+    outcome = await distill_post_loop(page, id, {}, timeout=DEFAULT_DPAGE_READ_POLL_TIMEOUT)
+    return signin_state(outcome, id)
+
+
+@router.post("/{id}/json")
+async def post_dpage_json(
+    id: str, request: Request, submission: SigninSubmission | None = None
+) -> SigninState:
+    page = await _resolve_signin_page(request)
+    body = submission if submission is not None else SigninSubmission()
+    outcome = await distill_post_loop(page, id, dict(body.values), button=body.button)
+    return signin_state(outcome, id)
 
 
 def is_local_address(host: str) -> bool:
@@ -325,10 +414,15 @@ async def distill_post_loop(
     page: zd.Tab,
     id: str,
     fields: dict[str, str],
-    action: str,
+    button: str | None = None,
     patterns: list[Pattern] | None = None,
     timeout: int = DEFAULT_DPAGE_POST_POLL_TIMEOUT,
-) -> HTMLResponse:
+) -> LoopOutcome:
+    """Drive the distillation/autofill loop one HTTP request's worth.
+
+    `button` picks a choice branch (`<button name="button" value="sms">`) and is kept out of
+    `fields` so that a site input whose name happens to be `button` cannot be mistaken for it.
+    """
     if patterns is None:
         path = os.path.join(os.path.dirname(__file__), "patterns", "**/*.html")
         patterns = load_distillation_patterns(path)
@@ -372,7 +466,6 @@ async def distill_post_loop(
 
         title_element = BeautifulSoup(distilled, "html.parser").find("title")
         title = title_element.get_text() if title_element is not None else DEFAULT_TITLE
-        options = {"title": title, "action": action}
         inputs = document.find_all("input")
         pending_actions: list[dict[str, str]] = []
         html_element = document.find("html")
@@ -394,7 +487,7 @@ async def distill_post_loop(
             max_reached = iteration == max - 1
             if max_reached and has_inputs:
                 logger.info("Still the same after timeout and need inputs, render the page...")
-                return HTMLResponse(render(str(document.find("body")), options))
+                return LoopOutcome(kind="need_input", title=title, document=document)
             continue
 
         current = match
@@ -407,17 +500,16 @@ async def distill_post_loop(
                 logger.info(
                     f"Distillation reported page error pattern; sign-in still marked complete for polling. Pattern name: {match.name}"
                 )
-                options["error_code"] = error
 
-            return HTMLResponse(render(FINISHED_MSG, options))
+            return LoopOutcome(kind="finished", title=title, error_code=error)
 
         names: list[str] = []
 
-        if fields.get("button"):
-            button = document.find("button", value=str(fields.get("button")))
-            if button:
-                logger.info(f"Clicking button button[value={fields.get('button')}]")
-                await autoclick(page, distilled, f"button[value={fields.get('button')}]")
+        if button:
+            button_element = document.find("button", value=button)
+            if button_element:
+                logger.info(f"Clicking button button[value={button}]")
+                await autoclick(page, distilled, f"button[value={button}]")
                 continue
 
         processed_radio_groups: set[str] = set()
@@ -605,7 +697,7 @@ async def distill_post_loop(
                 should_submit = True
             else:
                 logger.warning("Not all form fields are filled")
-                return HTMLResponse(render(str(document.find("body")), options))
+                return LoopOutcome(kind="need_input", title=title, document=document)
 
         if len(pending_actions) > 0:
             action_results = await page_batch_actions(page, pending_actions)
@@ -659,13 +751,16 @@ async def distill_post_loop(
         hostname=hostname_attr or "unknown",
         iteration=max,
     )
-    raise HTTPException(status_code=503, detail="Timeout reached")
+    return LoopOutcome(kind="timeout")
 
 
 async def zen_post_dpage(page: zd.Tab, id: str, request: Request) -> HTMLResponse:
     form_data = await request.form()
     fields: dict[str, str] = {k: str(v) for k, v in form_data.items()}
-    return await distill_post_loop(page, id, fields, f"/dpage/{id}")
+    # The HTML form has one flat namespace, so `button` still arrives alongside the fields.
+    button = fields.pop("button", None)
+    outcome = await distill_post_loop(page, id, fields, button=button)
+    return render_outcome(outcome, f"/dpage/{id}")
 
 
 async def remote_zen_dpage_mcp_tool(
