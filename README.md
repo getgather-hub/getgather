@@ -82,7 +82,7 @@ Follow the MCP install [guide](https://code.visualstudio.com/docs/copilot/chat/m
 _Example_: `curl -X POST localhost:8300/api/v1/browsers/xyz123` creates a container named `chromium-xyz123` and returns:
 
 ```json
-{ "container_name": "chromium-xyz123", "status": "created" }
+{ "browser_id": "xyz123", "status": "created" }
 ```
 
 ### Stop a browser
@@ -92,7 +92,7 @@ _Example_: `curl -X POST localhost:8300/api/v1/browsers/xyz123` creates a contai
 _Example_: `curl -X DELETE localhost:8300/api/v1/browsers/xyz123` terminates the container named `chromium-xyz123` and returns:
 
 ```json
-{ "container_name": "chromium-xyz123", "status": "deleted" }
+{ "status": "deleted" }
 ```
 
 ### Query a browser

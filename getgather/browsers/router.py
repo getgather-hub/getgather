@@ -233,7 +233,7 @@ async def create_browser(browser_id: str, request: Request) -> dict[str, Any]:
         browser_type = request.headers.get("x-browser-type")
         result = await backend.create_browser(browser_id, origin_ip, target_domain, browser_type)
         logger.info(f"Browser {browser_id} is started.")
-        return result
+        return {"browser_id": browser_id, **result}
     except Exception as e:
         detail = f"Unable to start browser {browser_id}!"
         logger.error(f"{detail} Exception={e}")
