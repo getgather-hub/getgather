@@ -1,3 +1,8 @@
+import asyncio
+import json
+from typing import Any
+
+import websockets
 from pytest import MonkeyPatch
 
 from getgather.browser import _setup_cdp_url  # pyright: ignore[reportPrivateUsage]
@@ -67,3 +72,84 @@ def test_create_browser_auto_name_starts_with_b(monkeypatch: MonkeyPatch) -> Non
     assert response.status_code == 200
     data = response.json()
     assert data["browser_id"].startswith("B")
+
+
+class _FakeRemote:
+    """A stand-in for the browser's CDP socket: records what the relay forwards, and answers
+    every command with a canned result carrying the browser's own (raw) target id."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self._replies: asyncio.Queue[str] = asyncio.Queue()
+
+    async def send(self, message: str) -> None:
+        self.sent.append(message)
+        await self._replies.put(json.dumps({"id": 1, "result": {"targetId": "abc1234567"}}))
+
+    def __aiter__(self) -> "_FakeRemote":
+        return self
+
+    async def __anext__(self) -> str:
+        return await self._replies.get()
+
+
+class _FakeConnect:
+    def __init__(self, remote: _FakeRemote) -> None:
+        self._remote = remote
+
+    async def __aenter__(self) -> _FakeRemote:
+        return self._remote
+
+    async def __aexit__(self, *args: Any) -> bool:
+        return False
+
+
+class _FakeCDPBackend:
+    """The slice of Backend that the browser-level CDP relay touches."""
+
+    async def browser_exists(self, browser_id: str) -> bool:
+        return True
+
+    async def get_cdp_websocket_remote_url(self, browser_id: str) -> str:
+        return "ws://remote/devtools/browser/xyz"
+
+    def cdp_targets_need_namespacing(self) -> bool:
+        return True
+
+
+def _relay_roundtrip(monkeypatch: MonkeyPatch, path: str, sent_target_id: str) -> tuple[str, str]:
+    """Drive one command through `path` and return (what the browser saw, what the client saw)."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    remote = _FakeRemote()
+    monkeypatch.setattr(browsers_router, "backend", _FakeCDPBackend())
+    monkeypatch.setattr(websockets, "connect", lambda url, **kwargs: _FakeConnect(remote))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+
+    app = FastAPI()
+    app.include_router(browsers_router.router)
+    with TestClient(app).websocket_connect(path) as ws:
+        ws.send_text(
+            json.dumps({
+                "id": 1,
+                "method": "Target.attachToTarget",
+                "params": {"targetId": sent_target_id},
+            })
+        )
+        received: str = ws.receive_text()
+    return remote.sent[0], received
+
+
+def test_cdp_route_namespaces_target_ids(monkeypatch: MonkeyPatch) -> None:
+    # /cdp strips the browser_id off ids the client sends and prepends it to ids coming back.
+    to_browser, to_client = _relay_roundtrip(monkeypatch, "/cdp/BID", "BID@abc1234567")
+    assert json.loads(to_browser)["params"]["targetId"] == "abc1234567"
+    assert json.loads(to_client)["result"]["targetId"] == "BID@abc1234567"
+
+
+def test_cdp_raw_route_relays_verbatim(monkeypatch: MonkeyPatch) -> None:
+    # /api/v1/browsers/{browser_id}/cdp does no patching in either direction: the client speaks the browser's
+    # own raw target ids, and both frames cross the relay byte-for-byte.
+    to_browser, to_client = _relay_roundtrip(monkeypatch, "/api/v1/browsers/BID/cdp", "abc1234567")
+    assert json.loads(to_browser)["params"]["targetId"] == "abc1234567"
+    assert json.loads(to_client)["result"]["targetId"] == "abc1234567"

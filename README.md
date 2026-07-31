@@ -125,6 +125,18 @@ _Example_: `curl localhost:23456/api/v1/browsers/test/pages` returns:
 ["96FDE4162B8EEEBF98E26756D21CF0C5"]
 ```
 
+### Connect to a browser over CDP
+
+`GET /api/v1/browsers/{browser_id}/cdp` upgrades to a WebSocket and tunnels a CDP session to the specified browser. The browser is auto-launched if it isn't already running. Returns HTTP 4502 (WebSocket close code) if the remote debugger URL can't be resolved after retries.
+
+_Example (Playwright with Node.js)_:
+
+```js
+const { chromium } = require("@playwright/test");
+const target = "ws://localhost:23456/api/v1/browsers/xyz123/cdp";
+const browser = await chromium.connectOverCDP(target);
+```
+
 ### Get page HTML
 
 `GET /api/v1/browsers/{browser_id}/pages/{page_id}/html` returns the raw HTML of the specified page. Returns HTTP 404 if the browser or page is not found.

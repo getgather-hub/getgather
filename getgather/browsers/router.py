@@ -281,10 +281,10 @@ async def list_browsers() -> JSONResponse:
         raise HTTPException(status_code=500, detail=detail)
 
 
-@router.websocket("/cdp/{browser_id}")
-async def cdp_browser_websocket_proxy(client_ws: WebSocket, browser_id: str) -> None:
-    logger.debug(f"[CDP] Entered cdp_browser_websocket_proxy for browser_id={browser_id}")
-
+async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: bool) -> None:
+    """Shared body of the browser-level CDP routes: auto-launch the browser, resolve the
+    backend's remote wss URL, then relay. `patch` decides whether target ids are namespaced by
+    browser_id on the way through (`/cdp`) or passed verbatim (`/api/v1/browsers/{browser_id}/cdp`)."""
     await client_ws.accept()
     logger.debug("[CDP] WebSocket accepted")
 
@@ -326,13 +326,32 @@ async def cdp_browser_websocket_proxy(client_ws: WebSocket, browser_id: str) -> 
         await client_ws.close(code=4502, reason="Failed to get debugger URL")
         return
 
-    # (3) Relay. `cdp_targets_need_namespacing` lets each backend tell the router whether the URL
-    # it returned already namespaces target ids (Fleet's external /cdp proxy) — in which case we
-    # do not patch again (would double-prefix browser_id).
+    # (3) Relay.
     logger.info(f"[CDP] Client connected, proxying to {remote_url}")
-    patch = backend.cdp_targets_need_namespacing()
     await websocket_proxy(client_ws, remote_url, browser_id, patch)
+
+
+@router.websocket("/cdp/{browser_id}")
+async def cdp_browser_websocket_proxy(client_ws: WebSocket, browser_id: str) -> None:
+    # `cdp_targets_need_namespacing` lets each backend tell the router whether the URL it returned
+    # already namespaces target ids (Fleet's external /cdp proxy) — in which case we do not patch
+    # again (would double-prefix browser_id).
+    logger.debug(f"[CDP] Entered cdp_browser_websocket_proxy for browser_id={browser_id}")
+    await relay_browser_cdp(client_ws, browser_id, patch=backend.cdp_targets_need_namespacing())
     logger.debug("[CDP] cdp_browser_websocket_proxy exiting")
+
+
+@router.websocket("/api/v1/browsers/{browser_id}/cdp")
+async def cdp_browser_websocket_proxy_raw(client_ws: WebSocket, browser_id: str) -> None:
+    """Same relay as `/cdp/{browser_id}`, but byte-for-byte: no target-id namespacing at all, in
+    either direction. Clients see the browser's own raw target ids (`abc1234567`, not
+    `xyz@abc1234567`) and any id they send is forwarded untouched.
+
+    Note this route does not undo namespacing applied upstream: with `CHROMEFLEET_URL` set we
+    relay to the external fleet's own `/cdp` proxy, which namespaces on its side."""
+    logger.debug(f"[CDP] Entered cdp_browser_websocket_proxy_raw for browser_id={browser_id}")
+    await relay_browser_cdp(client_ws, browser_id, patch=False)
+    logger.debug("[CDP] cdp_browser_websocket_proxy_raw exiting")
 
 
 @router.websocket("/devtools/{path:path}")
