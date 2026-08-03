@@ -115,13 +115,19 @@ async def _get_purchases(
 
     total_pages = int(page_data.get("total_pages", 1))
     orders = page_data.get("orders", [])
-    order_numbers = [o["order_number"] for o in orders if "order_number" in o]
 
     pagination = {
         "current_page": page_number,
         "total_pages": total_pages,
         "page_size": LIST_PAGE_SIZE,
     }
+
+    # STORE orders have no order_number and already embed full order_lines
+    # (tcin, description, images) in the list response, so no detail fetch needed.
+    if order_purchase_type == "STORE":
+        return {"target_purchases": orders, "pagination": pagination}
+
+    order_numbers = [o["order_number"] for o in orders if "order_number" in o]
 
     if not order_numbers:
         return {"target_purchases": [], "pagination": pagination}
