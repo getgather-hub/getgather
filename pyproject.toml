@@ -26,6 +26,7 @@ dependencies = [
   "async-lru>=2.0",
   "geoip2>=5.2.0",
   "daytona>=0.183.0",
+  "boto3>=1.35",
 ]
 
 [project.optional-dependencies]

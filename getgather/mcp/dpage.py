@@ -31,6 +31,7 @@ from getgather.browser import (
 )
 from getgather.config import settings
 from getgather.mcp.html_renderer import DEFAULT_TITLE, render_form
+from getgather.recordings import schedule_sweep
 from getgather.zen_distill import (
     Match,
     Pattern,
@@ -143,6 +144,7 @@ def _target_domain_from_initial_url(initial_url: str) -> str:
 
 async def _try_action_with_probe(
     browser: zd.Browser,
+    browser_id: str,
     initial_url: str,
     action: Any,
     timeout: int,
@@ -163,6 +165,7 @@ async def _try_action_with_probe(
         if terminated:
             result = await action(page, browser)
             await safe_close_page(page)
+            schedule_sweep(browser_id)
             return result
         await safe_close_page(page)
         return None
@@ -731,6 +734,7 @@ async def remote_zen_dpage_mcp_tool(
     )
     if terminated:
         await safe_close_page(page)
+        schedule_sweep(browser_id)
         distillation_result = converted if converted is not None else distilled
         return {result_key: distillation_result}
 
@@ -762,12 +766,17 @@ async def remote_zen_dpage_with_action(
 
     # Probe any existing browser for an authenticated session before opening dpage.
     probe_browser = None
+    probe_browser_id = ""
     if incoming:
-        probe_browser = await get_remote_browser(incoming.browser_id)
+        probe_browser_id = incoming.browser_id
+        probe_browser = await get_remote_browser(probe_browser_id)
     elif not incognito:
-        probe_browser = await get_remote_browser(mcp_session_id or get_host_id())
+        probe_browser_id = mcp_session_id or get_host_id()
+        probe_browser = await get_remote_browser(probe_browser_id)
     if probe_browser is not None:
-        result = await _try_action_with_probe(probe_browser, initial_url, action, timeout)
+        result = await _try_action_with_probe(
+            probe_browser, probe_browser_id, initial_url, action, timeout
+        )
         if result is not None:
             return result
 
@@ -823,6 +832,7 @@ async def remote_zen_dpage_with_action(
     if terminated:
         result = await action(page, browser)
         await safe_close_page(page)
+        schedule_sweep(browser_id)
         return result
 
     page.hostname = urllib.parse.urlparse(initial_url).hostname  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
