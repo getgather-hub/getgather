@@ -212,6 +212,20 @@ async def test_create_sets_active_browser_env_for_cloak(monkeypatch: MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_create_sets_cloakbrowser_license_key_for_cloak(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "CLOAKBROWSER_LICENSE_KEY", "cb_test_key")
+    captured = await _capture_create_params(monkeypatch, backend)
+    await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
+    assert captured[0].env_vars == {
+        "ACTIVE_BROWSER": "cloak",
+        "CLOAKBROWSER_LICENSE_KEY": "cb_test_key",
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_omits_env_for_chrome(monkeypatch: MonkeyPatch) -> None:
     # Chrome is the default: send no env_vars so the create call is identical to a Chrome-only
     # snapshot (older Daytona backends reject unexpected env_vars).

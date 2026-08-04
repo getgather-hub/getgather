@@ -360,11 +360,14 @@ class DaytonaBackend:
         # is the default. Only set the env for a non-Chrome pick: Chrome is the snapshot default, so
         # a None env_vars keeps the create call identical to a Chrome-only snapshot (older Daytona
         # backends reject env_vars they don't expect).
-        env_vars = (
-            {ACTIVE_BROWSER_ENV: browser_type}
-            if browser_type and browser_type != "chrome"
-            else None
-        )
+        env_vars: dict[str, str] | None = None
+        sandbox_env: dict[str, str] = {}
+        if browser_type and browser_type != "chrome":
+            sandbox_env[ACTIVE_BROWSER_ENV] = browser_type
+        if browser_type == "cloak" and settings.CLOAKBROWSER_LICENSE_KEY:
+            sandbox_env["CLOAKBROWSER_LICENSE_KEY"] = settings.CLOAKBROWSER_LICENSE_KEY
+        if sandbox_env:
+            env_vars = sandbox_env
         params = CreateSandboxFromSnapshotParams(
             snapshot=self.snapshot,
             name=name,

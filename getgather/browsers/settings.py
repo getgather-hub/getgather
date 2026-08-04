@@ -52,6 +52,7 @@ class BrowserSettings(BaseSettings):
         ""  # point at a self-hosted Daytona; empty uses the managed cloud default
     )
     DAYTONA_SNAPSHOT: str = ""
+    CLOAKBROWSER_LICENSE_KEY: str = ""
 
     # Browserbase backend (required when BROWSER_BACKEND=browserbase). Read at runtime from the
     # environment so the server can boot without it when another backend is selected.
