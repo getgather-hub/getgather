@@ -102,6 +102,7 @@ class _BestOfNBackend(_CleanupBackend, Protocol):
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -111,6 +112,7 @@ async def best_of_n(
     origin_ip: str | None,
     target_domain: str | None,
     browser_type: str | None,
+    snapshot: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Race `n` cold-create candidates; keep the first that fully succeeds, delete the rest.
 
@@ -125,7 +127,9 @@ async def best_of_n(
     logger.info(f"Best-of-{n} browser race: {ids}")
 
     async def _candidate(bid: str) -> tuple[str, dict[str, Any]]:
-        return bid, await backend.create_browser(bid, origin_ip, target_domain, browser_type)
+        return bid, await backend.create_browser(
+            bid, origin_ip, target_domain, browser_type, snapshot
+        )
 
     tasks = [asyncio.create_task(_candidate(b)) for b in ids]
     winner: tuple[str, dict[str, Any]] | None = None
@@ -208,6 +212,7 @@ class Backend(Protocol):
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def get_browser(

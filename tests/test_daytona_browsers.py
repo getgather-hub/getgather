@@ -117,9 +117,11 @@ def test_create_browser_n1_short_circuits_best_of_n(monkeypatch: MonkeyPatch) ->
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> dict[str, str]:
         called["browser_id"] = browser_id
         called["browser_type"] = browser_type
+        called["snapshot"] = snapshot
         return {"id": browser_id}
 
     async def fail_best_of_n(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
@@ -159,11 +161,13 @@ def test_create_browser_auto_n_gt1_invokes_best_of_n(monkeypatch: MonkeyPatch) -
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> tuple[str, dict[str, str]]:
         invoked["n"] = n
         invoked["origin_ip"] = origin_ip
         invoked["target_domain"] = target_domain
         invoked["browser_type"] = browser_type
+        invoked["snapshot"] = snapshot
         return "winner", {"id": "winner"}
 
     monkeypatch.setattr(router_module, "best_of_n", fake_best_of_n)
@@ -178,6 +182,7 @@ def test_create_browser_auto_n_gt1_invokes_best_of_n(monkeypatch: MonkeyPatch) -
             "x-origin-ip": "1.2.3.4",
             "x-target-domains": "amazon.com",
             "x-browser-type": "cloak",
+            "x-daytona-snapshot": "custom-snapshot",
         },
     )
     assert response.status_code == 200
@@ -187,6 +192,7 @@ def test_create_browser_auto_n_gt1_invokes_best_of_n(monkeypatch: MonkeyPatch) -
         "origin_ip": "1.2.3.4",
         "target_domain": "amazon.com",
         "browser_type": "cloak",
+        "snapshot": "custom-snapshot",
     }
 
 
@@ -244,6 +250,24 @@ async def test_create_omits_env_when_browser_type_none(monkeypatch: MonkeyPatch)
     assert captured[0].env_vars is None
 
 
+@pytest.mark.asyncio
+async def test_create_uses_snapshot_override(monkeypatch: MonkeyPatch) -> None:
+    backend = _backend()
+    captured = await _capture_create_params(monkeypatch, backend)
+    await backend._create("chromium-test", None, "custom-snapshot")  # pyright: ignore[reportPrivateUsage]
+    assert captured[0].snapshot == "custom-snapshot"
+
+
+@pytest.mark.asyncio
+async def test_create_uses_default_snapshot_when_override_missing(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    backend = _backend()
+    captured = await _capture_create_params(monkeypatch, backend)
+    await backend._create("chromium-test", None, None)  # pyright: ignore[reportPrivateUsage]
+    assert captured[0].snapshot == "test-snapshot"
+
+
 def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: MonkeyPatch) -> None:
     # When BROWSER_BEST_OF_N is unset (None), the router falls back to the backend's own default
     # (DaytonaBackend.default_best_of_n == 3) instead of hard-coding 1.
@@ -263,6 +287,7 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> tuple[str, dict[str, str]]:
         invoked["n"] = n
         return "winner", {"id": "winner"}

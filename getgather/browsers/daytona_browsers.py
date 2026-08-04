@@ -183,10 +183,11 @@ class DaytonaBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        snapshot: str | None = None,
     ) -> dict[str, Any]:
         lock = self._locks.setdefault(browser_id, asyncio.Lock())
         async with lock:
-            sandbox = await self._ensure(browser_id, browser_type)
+            sandbox = await self._ensure(browser_id, browser_type, snapshot)
             # Proxy is mandatory when configured: let ProxyVerificationError propagate (the endpoint
             # maps it to 500) so the client can retry rather than get an unproxied browser.
             await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
@@ -291,11 +292,16 @@ class DaytonaBackend:
         )
         return signed.url
 
-    async def _ensure(self, browser_id: str, browser_type: str | None = None) -> AsyncSandbox:
+    async def _ensure(
+        self,
+        browser_id: str,
+        browser_type: str | None = None,
+        snapshot: str | None = None,
+    ) -> AsyncSandbox:
         name = _sandbox_name(browser_id)
         sandbox = await self._get(name)
         if sandbox is None:
-            sandbox = await self._create(name, browser_type)
+            sandbox = await self._create(name, browser_type, snapshot)
 
         # Browser selection is baked into the sandbox at create time via the ACTIVE_BROWSER env var
         # (see _create), so both a fresh create and a resumed start boot the right browser directly —
@@ -354,7 +360,9 @@ class DaytonaBackend:
         except DaytonaNotFoundError:
             return None
 
-    async def _create(self, name: str, browser_type: str | None = None) -> AsyncSandbox:
+    async def _create(
+        self, name: str, browser_type: str | None = None, snapshot: str | None = None
+    ) -> AsyncSandbox:
         # Select the browser at boot via env; the chromium s6 service reads ACTIVE_BROWSER on first
         # boot (chrome-live). Driven by the per-request `browser_type` (x-browser-type header); Chrome
         # is the default. Only set the env for a non-Chrome pick: Chrome is the snapshot default, so
@@ -376,9 +384,10 @@ class DaytonaBackend:
             if env_vars
             else None
         )
+        effective_snapshot = snapshot or self.snapshot
         logger.info(f"Daytona sandbox env_vars for {name}: {safe_env_vars}")
         params = CreateSandboxFromSnapshotParams(
-            snapshot=self.snapshot,
+            snapshot=effective_snapshot,
             name=name,
             labels={LABEL_FLEET: "1"},
             env_vars=env_vars,
@@ -387,7 +396,7 @@ class DaytonaBackend:
             # delete after TTL_MINUTES continuously stopped; Daytona owns teardown
             auto_delete_interval=TTL_MINUTES,
         )
-        logger.info(f"Creating Daytona sandbox {name} from snapshot {self.snapshot}")
+        logger.info(f"Creating Daytona sandbox {name} from snapshot {effective_snapshot}")
         try:
             return await self.client.create(params, timeout=400)
         except DaytonaConflictError:

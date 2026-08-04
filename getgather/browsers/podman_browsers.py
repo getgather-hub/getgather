@@ -346,7 +346,9 @@ class PodmanBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,  # not supported by the podman backend; always Chrome
+        snapshot: str | None = None,  # not supported by the podman backend
     ) -> dict[str, Any]:
+        del snapshot
         container_name = f"{BROWSER_NAME_PREFIX}{browser_id}"
         await launch_container(settings.CONTAINER_IMAGE, container_name)
         ip = await configure_remote_browser(browser_id, container_name, origin_ip, target_domain)
