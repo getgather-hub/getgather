@@ -368,6 +368,15 @@ class DaytonaBackend:
             sandbox_env["CLOAKBROWSER_LICENSE_KEY"] = settings.CLOAKBROWSER_LICENSE_KEY
         if sandbox_env:
             env_vars = sandbox_env
+        safe_env_vars = (
+            {
+                key: ("***" if key == "CLOAKBROWSER_LICENSE_KEY" else value)
+                for key, value in env_vars.items()
+            }
+            if env_vars
+            else None
+        )
+        logger.info(f"Daytona sandbox env_vars for {name}: {safe_env_vars}")
         params = CreateSandboxFromSnapshotParams(
             snapshot=self.snapshot,
             name=name,
