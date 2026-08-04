@@ -369,6 +369,8 @@
   tools:
     - function_name: get_purchases
       description: Get online purchase history from a user's Target account.
+    - function_name: get_purchases_in_store
+      description: Get in-store purchase history from a user's Target account.
 
 - id: lazada
   name: Lazada MCP
