@@ -70,6 +70,6 @@ jobs:
         with:
           doppler-token: ${{ secrets.DOPPLER_TOKEN }}
           doppler-project: remotebrowser
-          doppler-config: daytona
+          doppler-config: ${{ matrix.config }}
           app-name: ${{ matrix.app_name }}
           build-args: ${{ contains(fromJSON('["daytona","daytona-cloakbrowser-pro"]'), matrix.env) && 'BROWSER_BACKEND=daytona' || '' }}
