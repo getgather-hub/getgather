@@ -43,7 +43,7 @@ jobs:
           entries: |
             { "env": "demo",        "config": "demo",        "app_name": "remotebrowser"     }
             { "env": "dev",         "config": "dev",         "app_name": "remotebrowser-dev" }
-            { "env": "daytona",     "config": "daytona",     "app_name": "remotebrowser-daytona" }
+            { "env": "daytona",     "config": "daytona",     "app_name": "remotebrowser-daytona-cloakbrowser-pro" }
             { "env": "browserbase", "config": "browserbase", "app_name": "remotebrowser-browserbase" }
             { "env": "daytona-cloakbrowser-pro", "config": "daytona", "app_name": "remotebrowser-daytona-cloakbrowser-pro" }
           selections: |
