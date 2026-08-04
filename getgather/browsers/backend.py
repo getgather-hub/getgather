@@ -81,6 +81,10 @@ class ProxyVerificationError(Exception):
     retry rather than receive an unproxied / partial browser."""
 
 
+class CloakBrowserSeatsExhausted(Exception):
+    """Raised when a CloakBrowser license has no free concurrent seats."""
+
+
 @runtime_checkable
 class _CleanupBackend(Protocol):
     """The slice of `Backend` that loser cleanup needs: check a candidate exists, delete it."""

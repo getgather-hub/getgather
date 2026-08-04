@@ -13,6 +13,7 @@ from websockets.exceptions import ConnectionClosed
 from getgather.browsers.backend import (
     Backend,
     BrowserNotFound,
+    CloakBrowserSeatsExhausted,
     best_of_n,
     create_backend,
     new_browser_id,
@@ -221,6 +222,10 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
             )
         logger.info(f"Browser {browser_id} is started.")
         return {"browser_id": browser_id, **result}
+    except CloakBrowserSeatsExhausted as e:
+        detail = str(e)
+        logger.warning(detail)
+        raise HTTPException(status_code=503, detail=detail)
     except Exception as e:
         detail = "Unable to start browser!"
         logger.error(f"{detail} Exception={e}")
@@ -240,6 +245,10 @@ async def create_browser(browser_id: str, request: Request) -> dict[str, Any]:
         )
         logger.info(f"Browser {browser_id} is started.")
         return {"browser_id": browser_id, **result}
+    except CloakBrowserSeatsExhausted as e:
+        detail = str(e)
+        logger.warning(detail)
+        raise HTTPException(status_code=503, detail=detail)
     except Exception as e:
         detail = f"Unable to start browser {browser_id}!"
         logger.error(f"{detail} Exception={e}")

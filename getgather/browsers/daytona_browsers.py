@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import Any
 
+import httpx
 from daytona import (
     AsyncDaytona,
     AsyncSandbox,
@@ -17,6 +18,7 @@ from loguru import logger
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
     BrowserNotFound,
+    CloakBrowserSeatsExhausted,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
     get_page_websocket_debugger_url,
@@ -63,9 +65,41 @@ LIVE_VIEW_MAX_IDLE_SECONDS = 3600
 
 LABEL_FLEET = "fleet"
 
+# Solo plan concurrent seat cap; checked via CloakBrowser's session-count API before create.
+CLOAKBROWSER_MAX_SEATS = 5
+CLOAKBROWSER_SESSION_COUNT_URL = "https://cloakbrowser.dev/api/license/session/count"
+
 
 def _sandbox_name(browser_id: str) -> str:
     return f"{BROWSER_NAME_PREFIX}{browser_id}"
+
+
+async def _get_cloakbrowser_active_sessions(license_key: str) -> int | None:
+    """Live seat count for this license (same source as `python -m cloakbrowser info`)."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                CLOAKBROWSER_SESSION_COUNT_URL,
+                json={"license_key": license_key},
+            )
+            response.raise_for_status()
+            active = response.json().get("active")
+            return int(active) if active is not None else None
+    except Exception as e:
+        logger.warning(f"CloakBrowser session count lookup failed: {type(e).__name__}: {e}")
+        return None
+
+
+async def _ensure_cloakbrowser_seats_available(license_key: str) -> None:
+    active = await _get_cloakbrowser_active_sessions(license_key)
+    if active is None:
+        raise CloakBrowserSeatsExhausted(
+            "Could not verify CloakBrowser seat availability (license server unreachable)"
+        )
+    if active >= CLOAKBROWSER_MAX_SEATS:
+        raise CloakBrowserSeatsExhausted(
+            f"All {CLOAKBROWSER_MAX_SEATS} CloakBrowser seats are in use ({active} active)"
+        )
 
 
 async def _configure_sandbox_proxy(sandbox: AsyncSandbox, proxy_url: str) -> bool:
@@ -373,6 +407,7 @@ class DaytonaBackend:
         if browser_type and browser_type != "chrome":
             sandbox_env[ACTIVE_BROWSER_ENV] = browser_type
         if browser_type == "cloak" and settings.CLOAKBROWSER_LICENSE_KEY:
+            await _ensure_cloakbrowser_seats_available(settings.CLOAKBROWSER_LICENSE_KEY)
             sandbox_env["CLOAKBROWSER_LICENSE_KEY"] = settings.CLOAKBROWSER_LICENSE_KEY
         if sandbox_env:
             env_vars = sandbox_env

@@ -4,6 +4,7 @@ import pytest
 from pytest import MonkeyPatch
 
 from getgather.browsers import daytona_browsers
+from getgather.browsers.backend import CloakBrowserSeatsExhausted
 from getgather.browsers.daytona_browsers import DaytonaBackend, ProxyVerificationError
 
 
@@ -212,6 +213,7 @@ async def _capture_create_params(monkeypatch: MonkeyPatch, backend: DaytonaBacke
 async def test_create_sets_active_browser_env_for_cloak(monkeypatch: MonkeyPatch) -> None:
     # browser_type="cloak" (x-browser-type header) selects CloakBrowser via the ACTIVE_BROWSER env.
     backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "CLOAKBROWSER_LICENSE_KEY", None)
     captured = await _capture_create_params(monkeypatch, backend)
     await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
     assert captured[0].env_vars == {"ACTIVE_BROWSER": "cloak"}
@@ -223,12 +225,67 @@ async def test_create_sets_cloakbrowser_license_key_for_cloak(
 ) -> None:
     backend = _backend()
     monkeypatch.setattr(daytona_browsers.settings, "CLOAKBROWSER_LICENSE_KEY", "cb_test_key")
+
+    async def fake_seats(_license_key: str) -> None:
+        return None
+
+    monkeypatch.setattr(daytona_browsers, "_ensure_cloakbrowser_seats_available", fake_seats)
     captured = await _capture_create_params(monkeypatch, backend)
     await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
     assert captured[0].env_vars == {
         "ACTIVE_BROWSER": "cloak",
         "CLOAKBROWSER_LICENSE_KEY": "cb_test_key",
     }
+
+
+@pytest.mark.asyncio
+async def test_create_raises_when_cloak_seats_exhausted(monkeypatch: MonkeyPatch) -> None:
+    backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "CLOAKBROWSER_LICENSE_KEY", "cb_test_key")
+
+    async def fake_seats(_license_key: str) -> None:
+        raise CloakBrowserSeatsExhausted("All 5 CloakBrowser seats are in use (5 active)")
+
+    monkeypatch.setattr(daytona_browsers, "_ensure_cloakbrowser_seats_available", fake_seats)
+    captured = await _capture_create_params(monkeypatch, backend)
+    with pytest.raises(CloakBrowserSeatsExhausted, match="5 active"):
+        await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
+    assert captured == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_cloakbrowser_seats_available_allows_when_under_cap(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_count(_license_key: str) -> int:
+        return 4
+
+    monkeypatch.setattr(daytona_browsers, "_get_cloakbrowser_active_sessions", fake_count)
+    await daytona_browsers._ensure_cloakbrowser_seats_available("cb_test_key")  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_ensure_cloakbrowser_seats_available_rejects_at_cap(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_count(_license_key: str) -> int:
+        return 5
+
+    monkeypatch.setattr(daytona_browsers, "_get_cloakbrowser_active_sessions", fake_count)
+    with pytest.raises(CloakBrowserSeatsExhausted, match="5 active"):
+        await daytona_browsers._ensure_cloakbrowser_seats_available("cb_test_key")  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_ensure_cloakbrowser_seats_available_rejects_when_unknown(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_count(_license_key: str) -> None:
+        return None
+
+    monkeypatch.setattr(daytona_browsers, "_get_cloakbrowser_active_sessions", fake_count)
+    with pytest.raises(CloakBrowserSeatsExhausted, match="unreachable"):
+        await daytona_browsers._ensure_cloakbrowser_seats_available("cb_test_key")  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
