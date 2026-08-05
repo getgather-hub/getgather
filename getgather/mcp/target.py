@@ -131,19 +131,15 @@ async def _get_purchases(
         "page_size": LIST_PAGE_SIZE,
     }
 
-    # STORE orders have no order_number and already embed full order_lines
-    # (tcin, description, images) in the list response, so no detail fetch needed.
-    if order_purchase_type == "STORE":
-        return {"target_purchases": orders, "pagination": pagination}
+    id_field = _ORDER_ID_FIELD[order_purchase_type]
+    identifiers = [o[id_field] for o in orders if id_field in o]
 
-    order_numbers = [o["order_number"] for o in orders if "order_number" in o]
-
-    if not order_numbers:
+    if not identifiers:
         return {"target_purchases": [], "pagination": pagination}
 
     try:
         details = await asyncio.wait_for(
-            _fetch_all_details(page, order_numbers, x_api_key), timeout=60.0
+            _fetch_all_details(page, order_purchase_type, identifiers, x_api_key), timeout=60.0
         )
     except asyncio.TimeoutError:
         logger.warning("Target: detail fetch timed out")
