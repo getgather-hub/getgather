@@ -9,6 +9,7 @@ import zendriver as zd
 from loguru import logger
 
 from getgather.browser import get_url, page_query_selector, zen_navigate_with_retry
+from getgather.config import settings
 from getgather.mcp.dpage import (
     remote_zen_dpage_mcp_tool,
     remote_zen_dpage_with_action,
@@ -26,6 +27,7 @@ class AmazonCountry:
     """Configuration for an Amazon country domain."""
 
     domain: str
+    origin: str
     purchase_history_key: str
     watch_history_result_key: str
     watchlist_result_key: str
@@ -39,29 +41,36 @@ class AmazonCountry:
 
     @property
     def base_url(self) -> str:
-        return f"https://www.{self.domain}"
+        return self.origin.rstrip("/")
 
     @property
     def signin_url(self) -> str:
         return f"{self.base_url}/ax/account/manage"
 
 
-AMAZON_US = AmazonCountry(
-    domain="amazon.com",
-    purchase_history_key="amazon_purchase_history",
-    watch_history_result_key="amazon_watch_history",
-    watchlist_result_key="amazon_prime_watchlist",
-    prime_library_result_key="amazon_prime_library",
-    watch_history_url="https://www.amazon.com/gp/video/settings/watch-history",
-    watchlist_url="https://www.amazon.com/gp/video/mystuff/watchlist",
-    prime_library_url="https://www.amazon.com/gp/video/mystuff/library",
-    browsing_history_url="https://www.amazon.com/gp/history?ref_=nav_AccountFlyout_browsinghistory",
-    watchlist_pagination_api_url="https://www.amazon.com/gp/video/api/paginateCollection",
-    watch_history_pagination_api_url="https://www.amazon.com/gp/video/api/getWatchHistorySettingsPage",
-)
+def create_amazon_us(base_url: str = "") -> AmazonCountry:
+    origin = (base_url or "https://www.amazon.com").rstrip("/")
+    return AmazonCountry(
+        domain="amazon.com",
+        origin=origin,
+        purchase_history_key="amazon_purchase_history",
+        watch_history_result_key="amazon_watch_history",
+        watchlist_result_key="amazon_prime_watchlist",
+        prime_library_result_key="amazon_prime_library",
+        watch_history_url=f"{origin}/gp/video/settings/watch-history",
+        watchlist_url=f"{origin}/gp/video/mystuff/watchlist",
+        prime_library_url=f"{origin}/gp/video/mystuff/library",
+        browsing_history_url=f"{origin}/gp/history?ref_=nav_AccountFlyout_browsinghistory",
+        watchlist_pagination_api_url=f"{origin}/gp/video/api/paginateCollection",
+        watch_history_pagination_api_url=(f"{origin}/gp/video/api/getWatchHistorySettingsPage"),
+    )
+
+
+AMAZON_US = create_amazon_us(settings.AMAZON_BASE_URL)
 
 AMAZON_CA = AmazonCountry(
     domain="amazon.ca",
+    origin="https://www.amazon.ca",
     purchase_history_key="amazonca_purchase_history",
     watch_history_result_key="amazon_ca_watch_history",
     watchlist_result_key="amazon_ca_prime_watchlist",
@@ -822,7 +831,7 @@ async def _get_watch_history_with_pagination(
                         "headers": {{
                             "accept": "*/*",
                             "x-amzn-requestid": requestId,
-                            "Referer": "https://www.amazon.com/gp/video/settings/watch-history",
+                            "Referer": "{country.watch_history_url}",
                             "x-requested-with": "XMLHttpRequest"
                         }},
                         "body": null,

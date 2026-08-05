@@ -18,6 +18,9 @@ class Settings(BrowserSettings, BaseSettings):
 
     DATA_DIR: str = ""
 
+    # Optional Amazon US origin override for local deterministic mocks.
+    AMAZON_BASE_URL: str = ""
+
     # Logging
     LOG_LEVEL: str = "INFO"
     SENTRY_DSN: str = ""

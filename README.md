@@ -73,6 +73,28 @@ Follow the MCP install [guide](https://code.visualstudio.com/docs/copilot/chat/m
 
 </details>
 
+### Local mock Amazon
+
+The Amazon US connector can target a deployed instance of the deterministic `apps/mock-amazon`
+app from the [`corelens-engineering/demos` repository](https://github.com/corelens-engineering/demos)
+instead of the real site. Set its browser-reachable origin before starting Remote Browser:
+
+```bash
+AMAZON_BASE_URL=https://your-deployed-mock-amazon.example.com
+```
+
+The override applies to Amazon US only, including its Prime Video pagination APIs. Amazon Canada
+and an unset configuration continue to use the real sites.
+
+With both servers running, exercise all eleven Amazon US MCP tools with:
+
+```bash
+uv run pytest tests/mcp/test_amazon.py -s -p no:xdist
+```
+
+The test signs in with `joe@example.com` / `trustno1`. It is skipped when `AMAZON_BASE_URL` is
+unset, so the normal MCP suite does not require a deployed mock.
+
 ## API
 
 ### Start a new browser
