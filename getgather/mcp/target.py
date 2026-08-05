@@ -51,14 +51,15 @@ async def _fetch_list_page(
 
 
 async def _fetch_all_details(
-    page: zd.Tab, order_numbers: list[str], x_api_key: str
+    page: zd.Tab, order_purchase_type: str, identifiers: list[str], x_api_key: str
 ) -> list[dict[str, Any]]:
-    numbers_json = json.dumps(order_numbers)
+    urls = [_detail_url(order_purchase_type, identifier) for identifier in identifiers]
+    urls_json = json.dumps(urls)
     js_code = f"""
         (async () => {{
-            const orderNumbers = {numbers_json};
-            const results = await Promise.all(orderNumbers.map(n =>
-                fetch('{_DETAIL_BASE}/' + n, {{
+            const urls = {urls_json};
+            const results = await Promise.all(urls.map(u =>
+                fetch(u, {{
                     credentials: 'include',
                     headers: {{
                         'accept': 'application/json',
