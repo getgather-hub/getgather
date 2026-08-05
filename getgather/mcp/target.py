@@ -21,6 +21,14 @@ _LIST_URL = (
 )
 _DETAIL_BASE = f"{API_BASE}/post_orders/v1"
 
+_ORDER_ID_FIELD = {"ONLINE": "order_number", "STORE": "store_receipt_id"}
+
+
+def _detail_url(order_purchase_type: str, identifier: str) -> str:
+    if order_purchase_type == "STORE":
+        return f"{_DETAIL_BASE}/orders/{identifier}/store"
+    return f"{_DETAIL_BASE}/{identifier}"
+
 
 async def _fetch_list_page(
     page: zd.Tab, page_number: int, x_api_key: str, order_purchase_type: str
