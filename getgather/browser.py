@@ -660,7 +660,6 @@ class Element:
                 tag=self.tag,
                 tab=self.page,
                 text=text,
-                preset=settings.CLOAKBROWSER_HUMAN_PRESET,
             )
         except CloakHumanizeUnavailable as exc:
             logger.warning(f"humanize unavailable, falling back to type_text: {exc}")
@@ -675,7 +674,6 @@ class Element:
                 self.element,
                 tag=self.tag,
                 tab=self.page,
-                preset=settings.CLOAKBROWSER_HUMAN_PRESET,
             )
         except CloakHumanizeUnavailable as exc:
             logger.warning(f"humanize unavailable, falling back to mouse_click: {exc}")

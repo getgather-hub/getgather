@@ -53,11 +53,6 @@ class BrowserSettings(BaseSettings):
     )
     DAYTONA_SNAPSHOT: str = ""
 
-    # Route dpage CDP actions through cloakbrowser humanize (Bézier mouse + human typing).
-    # Per-pattern: rb-humanize enables CDP actions + humanize; rb-trusted-actions is CDP without humanize.
-    CLOAKBROWSER_HUMANIZE: bool = False
-    CLOAKBROWSER_HUMAN_PRESET: Literal["default", "careful"] = "default"
-
     # Browserbase backend (required when BROWSER_BACKEND=browserbase). Read at runtime from the
     # environment so the server can boot without it when another backend is selected.
     BROWSERBASE_API_KEY: str = ""

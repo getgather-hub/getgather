@@ -443,9 +443,7 @@ async def distill_post_loop(
             isinstance(html_element, Tag) and "rb-humanize" in html_element.attrs
         )
         use_cdp_actions = trusted_actions or pattern_humanize
-        humanize = use_cdp_actions and (
-            pattern_humanize or settings.CLOAKBROWSER_HUMANIZE
-        )
+        humanize = pattern_humanize
         if humanize:
             element_config = ElementConfig(
                 action_delay_ms=action_delay_ms,
@@ -469,7 +467,7 @@ async def distill_post_loop(
             pre_action_ms = _html_int_attr(html_element, "rb-pre-action-idle-ms", 0)
             if pre_action_ms > 0:
                 logger.info(f"Pre-action idle mouse for {pre_action_ms}ms")
-                await human_pre_action_idle(page, pre_action_ms, settings.CLOAKBROWSER_HUMAN_PRESET)
+                await human_pre_action_idle(page, pre_action_ms)
 
         if await terminate(distilled):
             logger.info("Finished!")
