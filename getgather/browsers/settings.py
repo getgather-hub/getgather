@@ -53,9 +53,6 @@ class BrowserSettings(BaseSettings):
     )
     DAYTONA_SNAPSHOT: str = ""
     CLOAKBROWSER_LICENSE_KEY: str = ""
-    # Route rb-trusted-actions through cloakbrowser humanize (Bézier mouse + human typing).
-    CLOAKBROWSER_HUMANIZE: bool = False
-    CLOAKBROWSER_HUMAN_PRESET: Literal["default", "careful"] = "default"
 
     # Browserbase backend (required when BROWSER_BACKEND=browserbase). Read at runtime from the
     # environment so the server can boot without it when another backend is selected.
