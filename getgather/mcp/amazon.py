@@ -1,12 +1,14 @@
 import asyncio
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any, cast
+from typing import Annotated, Any, cast
+from urllib.parse import urlsplit, urlunsplit
 
 import zendriver as zd
 from loguru import logger
+from pydantic import Field
 
 from getgather.browser import get_url, page_query_selector, zen_navigate_with_retry
 from getgather.mcp.dpage import (
@@ -21,11 +23,30 @@ from getgather.zen_distill import (
 )
 
 
+def _normalize_origin(base_url: str) -> str:
+    """Validate a caller-supplied origin and strip any trailing slash."""
+    parts = urlsplit(base_url.strip())
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(f"base_url must start with http:// or https://, got {base_url!r}")
+    if not parts.hostname:
+        raise ValueError(f"base_url must include a hostname, got {base_url!r}")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise ValueError(f"base_url must be an origin with no path or query, got {base_url!r}")
+    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+
+
+def _rebase_url(url: str, origin: str) -> str:
+    """Repoint an absolute URL at `origin`, keeping its path, query and fragment."""
+    target = urlsplit(origin)
+    parts = urlsplit(url)
+    return urlunsplit((target.scheme, target.netloc, parts.path, parts.query, parts.fragment))
+
+
 @dataclass(frozen=True)
 class AmazonCountry:
     """Configuration for an Amazon country domain."""
 
-    domain: str
+    base_url: str
     purchase_history_key: str
     watch_history_result_key: str
     watchlist_result_key: str
@@ -38,16 +59,32 @@ class AmazonCountry:
     watch_history_pagination_api_url: str
 
     @property
-    def base_url(self) -> str:
-        return f"https://www.{self.domain}"
-
-    @property
     def signin_url(self) -> str:
         return f"{self.base_url}/ax/account/manage"
 
+    def with_base_url(self, base_url: str) -> "AmazonCountry":
+        """Return a copy with every absolute URL repointed at `base_url`.
+
+        The video URLs are rebased individually rather than derived from `base_url`, since
+        Amazon CA serves them from a different origin than its storefront.
+        """
+        origin = _normalize_origin(base_url)
+        return replace(
+            self,
+            base_url=origin,
+            watch_history_url=_rebase_url(self.watch_history_url, origin),
+            watchlist_url=_rebase_url(self.watchlist_url, origin),
+            prime_library_url=_rebase_url(self.prime_library_url, origin),
+            browsing_history_url=_rebase_url(self.browsing_history_url, origin),
+            watchlist_pagination_api_url=_rebase_url(self.watchlist_pagination_api_url, origin),
+            watch_history_pagination_api_url=_rebase_url(
+                self.watch_history_pagination_api_url, origin
+            ),
+        )
+
 
 AMAZON_US = AmazonCountry(
-    domain="amazon.com",
+    base_url="https://www.amazon.com",
     purchase_history_key="amazon_purchase_history",
     watch_history_result_key="amazon_watch_history",
     watchlist_result_key="amazon_prime_watchlist",
@@ -61,7 +98,7 @@ AMAZON_US = AmazonCountry(
 )
 
 AMAZON_CA = AmazonCountry(
-    domain="amazon.ca",
+    base_url="https://www.amazon.ca",
     purchase_history_key="amazonca_purchase_history",
     watch_history_result_key="amazon_ca_watch_history",
     watchlist_result_key="amazon_ca_prime_watchlist",
@@ -822,7 +859,7 @@ async def _get_watch_history_with_pagination(
                         "headers": {{
                             "accept": "*/*",
                             "x-amzn-requestid": requestId,
-                            "Referer": "https://www.amazon.com/gp/video/settings/watch-history",
+                            "Referer": "{country.watch_history_url}",
                             "x-requested-with": "XMLHttpRequest"
                         }},
                         "body": null,
@@ -854,76 +891,104 @@ amazon_us_mcp = MCPTool(brand_id="amazon", name="Amazon MCP")
 amazon_ca_mcp = MCPTool(brand_id="amazonca", name="Amazon CA MCP")
 
 
+BaseUrlParam = Annotated[
+    str | None,
+    Field(
+        description=(
+            "Testing only: alternate origin to use instead of https://www.amazon.com."
+            " Omit for real Amazon data."
+        )
+    ),
+]
+
+
+def us_config(base_url: str | None) -> AmazonCountry:
+    """Resolve the Amazon US config, optionally repointed at an alternate origin.
+
+    Amazon CA is intentionally not overridable.
+    """
+    return AMAZON_US if base_url is None else AMAZON_US.with_base_url(base_url)
+
+
 @amazon_us_mcp.tool("search_purchase_history")
-async def amazon_us_search_purchase_history(keyword: str, page_number: int = 1) -> dict[str, Any]:
+async def amazon_us_search_purchase_history(
+    keyword: str, page_number: int = 1, base_url: BaseUrlParam = None
+) -> dict[str, Any]:
     """Search purchase history from amazon."""
-    return await _search_purchase_history(AMAZON_US, keyword, page_number)
+    return await _search_purchase_history(us_config(base_url), keyword, page_number)
 
 
 @amazon_us_mcp.tool("get_purchase_history")
 async def amazon_us_get_purchase_history(
-    year: str | int | None = None, start_index: int = 0
+    year: str | int | None = None, start_index: int = 0, base_url: BaseUrlParam = None
 ) -> dict[str, Any]:
     """Get purchase/order history of a amazon with dpage."""
-    return await _get_purchase_history(AMAZON_US, year, start_index)
+    return await _get_purchase_history(us_config(base_url), year, start_index)
 
 
 @amazon_us_mcp.tool("search_product")
-async def amazon_us_search_product(keyword: str) -> dict[str, Any]:
+async def amazon_us_search_product(keyword: str, base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Search product on amazon."""
-    return await _search_product(AMAZON_US, keyword)
+    return await _search_product(us_config(base_url), keyword)
 
 
 @amazon_us_mcp.tool("get_browsing_history")
-async def amazon_us_get_browsing_history() -> dict[str, Any]:
+async def amazon_us_get_browsing_history(base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Get browsing history from amazon."""
-    return await _get_browsing_history(AMAZON_US)
+    return await _get_browsing_history(us_config(base_url))
 
 
 @amazon_us_mcp.tool("get_purchase_history_with_details")
 async def amazon_us_get_purchase_history_with_details(
-    year: str | int | None = None, start_index: int = 0, timeFilter: str | None = None
+    year: str | int | None = None,
+    start_index: int = 0,
+    timeFilter: str | None = None,
+    base_url: BaseUrlParam = None,
 ) -> dict[str, Any]:
     """Get purchase/order history of a amazon with dpage."""
-    return await _get_purchase_history_with_details(AMAZON_US, year, start_index, timeFilter)
+    return await _get_purchase_history_with_details(
+        us_config(base_url), year, start_index, timeFilter
+    )
 
 
 @amazon_us_mcp.tool("signin")
-async def amazon_us_signin() -> dict[str, Any]:
+async def amazon_us_signin(base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Signin to amazon."""
-    return await _signin(AMAZON_US)
+    return await _signin(us_config(base_url))
 
 
 @amazon_us_mcp.tool("get_watch_history")
-async def amazon_us_get_watch_history() -> dict[str, Any]:
+async def amazon_us_get_watch_history(base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Get video watch history from Amazon."""
-    return await _get_watch_history(AMAZON_US)
+    return await _get_watch_history(us_config(base_url))
 
 
 @amazon_us_mcp.tool("get_watchlist")
-async def amazon_us_get_watchlist() -> dict[str, Any]:
+async def amazon_us_get_watchlist(base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Get Prime Video watchlist from Amazon."""
-    return await _get_watchlist(AMAZON_US)
+    return await _get_watchlist(us_config(base_url))
 
 
 @amazon_us_mcp.tool("get_prime_library")
-async def amazon_us_get_prime_library() -> dict[str, Any]:
+async def amazon_us_get_prime_library(base_url: BaseUrlParam = None) -> dict[str, Any]:
     """Get Prime Video purchases and rentals library from Amazon."""
-    return await _get_prime_library(AMAZON_US)
+    return await _get_prime_library(us_config(base_url))
 
 
 @amazon_us_mcp.tool("get_watchlist_with_pagination")
-async def amazon_us_get_watchlist_with_pagination(start_index: int = 0) -> dict[str, Any]:
+async def amazon_us_get_watchlist_with_pagination(
+    start_index: int = 0, base_url: BaseUrlParam = None
+) -> dict[str, Any]:
     """Get Prime Video watchlist from Amazon US with pagination."""
-    return await _get_watchlist_with_pagination(AMAZON_US, start_index)
+    return await _get_watchlist_with_pagination(us_config(base_url), start_index)
 
 
 @amazon_us_mcp.tool("get_watch_history_with_pagination")
 async def amazon_us_get_watch_history_with_pagination(
-    nextToken: str | None = None,
+    nextToken: str | None = None, base_url: BaseUrlParam = None
 ) -> dict[str, Any]:
-    """Get Prime Video watchlist from Amazon US with pagination."""
-    return await _get_watch_history_with_pagination(AMAZON_US, nextToken)
+    """Get video watch history from Amazon US with pagination."""
+    return await _get_watch_history_with_pagination(us_config(base_url), nextToken)
 
 
 @amazon_ca_mcp.tool("search_purchase_history")
