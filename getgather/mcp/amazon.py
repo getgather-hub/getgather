@@ -39,7 +39,8 @@ class AmazonCountry:
 
     @property
     def base_url(self) -> str:
-        return f"https://www.{self.domain}"
+        # `domain` is the full host, so a mock host with no `www.` works unchanged.
+        return f"https://{self.domain}"
 
     @property
     def signin_url(self) -> str:
@@ -47,21 +48,21 @@ class AmazonCountry:
 
 
 AMAZON_US = AmazonCountry(
-    domain="amazon.com",
+    domain="amazon-mock.dataportrait.app",
     purchase_history_key="amazon_purchase_history",
     watch_history_result_key="amazon_watch_history",
     watchlist_result_key="amazon_prime_watchlist",
     prime_library_result_key="amazon_prime_library",
-    watch_history_url="https://www.amazon.com/gp/video/settings/watch-history",
-    watchlist_url="https://www.amazon.com/gp/video/mystuff/watchlist",
-    prime_library_url="https://www.amazon.com/gp/video/mystuff/library",
-    browsing_history_url="https://www.amazon.com/gp/history?ref_=nav_AccountFlyout_browsinghistory",
-    watchlist_pagination_api_url="https://www.amazon.com/gp/video/api/paginateCollection",
-    watch_history_pagination_api_url="https://www.amazon.com/gp/video/api/getWatchHistorySettingsPage",
+    watch_history_url="https://amazon-mock.dataportrait.app/gp/video/settings/watch-history",
+    watchlist_url="https://amazon-mock.dataportrait.app/gp/video/mystuff/watchlist",
+    prime_library_url="https://amazon-mock.dataportrait.app/gp/video/mystuff/library",
+    browsing_history_url="https://amazon-mock.dataportrait.app/gp/history?ref_=nav_AccountFlyout_browsinghistory",
+    watchlist_pagination_api_url="https://amazon-mock.dataportrait.app/gp/video/api/paginateCollection",
+    watch_history_pagination_api_url="https://amazon-mock.dataportrait.app/gp/video/api/getWatchHistorySettingsPage",
 )
 
 AMAZON_CA = AmazonCountry(
-    domain="amazon.ca",
+    domain="www.amazon.ca",
     purchase_history_key="amazonca_purchase_history",
     watch_history_result_key="amazon_ca_watch_history",
     watchlist_result_key="amazon_ca_prime_watchlist",
@@ -822,7 +823,7 @@ async def _get_watch_history_with_pagination(
                         "headers": {{
                             "accept": "*/*",
                             "x-amzn-requestid": requestId,
-                            "Referer": "https://www.amazon.com/gp/video/settings/watch-history",
+                            "Referer": "{country.watch_history_url}",
                             "x-requested-with": "XMLHttpRequest"
                         }},
                         "body": null,
