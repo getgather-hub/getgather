@@ -19,18 +19,18 @@
     },
     {
       "name": "product_names",
-      "selector": "div.yohtmlc-product-title a",
+      "selector": "div.yohtmlc-product-title a, div.yo-enhanced-card div.yo-enhanced-title",
       "kind": "list"
     },
     {
       "name": "image_urls",
-      "selector": "div.product-image img, .item-view-left-col-inner img",
+      "selector": "div.product-image img, .item-view-left-col-inner img, div.yo-enhanced-card-image a img",
       "attribute": "src",
       "kind": "list"
     },
     {
       "name": "product_urls",
-      "selector": "div.yohtmlc-product-title a",
+      "selector": "div.yohtmlc-product-title a, div.yo-enhanced-card div.yo-enhanced-title a",
       "attribute": "href",
       "kind": "list"
     },
