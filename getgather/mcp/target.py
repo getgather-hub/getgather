@@ -21,6 +21,14 @@ _LIST_URL = (
 )
 _DETAIL_BASE = f"{API_BASE}/post_orders/v1"
 
+_ORDER_ID_FIELD = {"ONLINE": "order_number", "STORE": "store_receipt_id"}
+
+
+def _detail_url(order_purchase_type: str, identifier: str) -> str:
+    if order_purchase_type == "STORE":
+        return f"{_DETAIL_BASE}/orders/{identifier}/store"
+    return f"{_DETAIL_BASE}/{identifier}"
+
 
 async def _fetch_list_page(
     page: zd.Tab, page_number: int, x_api_key: str, order_purchase_type: str
@@ -43,14 +51,15 @@ async def _fetch_list_page(
 
 
 async def _fetch_all_details(
-    page: zd.Tab, order_numbers: list[str], x_api_key: str
+    page: zd.Tab, order_purchase_type: str, identifiers: list[str], x_api_key: str
 ) -> list[dict[str, Any]]:
-    numbers_json = json.dumps(order_numbers)
+    urls = [_detail_url(order_purchase_type, identifier) for identifier in identifiers]
+    urls_json = json.dumps(urls)
     js_code = f"""
         (async () => {{
-            const orderNumbers = {numbers_json};
-            const results = await Promise.all(orderNumbers.map(n =>
-                fetch('{_DETAIL_BASE}/' + n, {{
+            const urls = {urls_json};
+            const results = await Promise.all(urls.map(u =>
+                fetch(u, {{
                     credentials: 'include',
                     headers: {{
                         'accept': 'application/json',
@@ -122,19 +131,15 @@ async def _get_purchases(
         "page_size": LIST_PAGE_SIZE,
     }
 
-    # STORE orders have no order_number and already embed full order_lines
-    # (tcin, description, images) in the list response, so no detail fetch needed.
-    if order_purchase_type == "STORE":
-        return {"target_purchases": orders, "pagination": pagination}
+    id_field = _ORDER_ID_FIELD[order_purchase_type]
+    identifiers = [o[id_field] for o in orders if id_field in o]
 
-    order_numbers = [o["order_number"] for o in orders if "order_number" in o]
-
-    if not order_numbers:
+    if not identifiers:
         return {"target_purchases": [], "pagination": pagination}
 
     try:
         details = await asyncio.wait_for(
-            _fetch_all_details(page, order_numbers, x_api_key), timeout=60.0
+            _fetch_all_details(page, order_purchase_type, identifiers, x_api_key), timeout=60.0
         )
     except asyncio.TimeoutError:
         logger.warning("Target: detail fetch timed out")
