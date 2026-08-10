@@ -349,7 +349,16 @@ class PodmanBackend:
     ) -> dict[str, Any]:
         container_name = f"{BROWSER_NAME_PREFIX}{browser_id}"
         await launch_container(settings.CONTAINER_IMAGE, container_name)
-        ip = await configure_remote_browser(browser_id, container_name, origin_ip, target_domain)
+        try:
+            ip = await configure_remote_browser(
+                browser_id, container_name, origin_ip, target_domain
+            )
+        except ProxyVerificationError:
+            # A container that fails proxy verification is unusable (wrong/no egress IP) and
+            # would otherwise sit around until manually reaped. Delete it immediately.
+            logger.warning(f"Deleting {container_name} after proxy verification failure")
+            await kill_container(container_name)
+            raise
         return {"container_name": container_name, "status": "created", "ip": ip}
 
     async def get_browser(
