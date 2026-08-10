@@ -34,7 +34,7 @@ VNC_PORT = 8080
 # selected browser — no post-start swap. See chrome-live chromium/run.
 ACTIVE_BROWSER_ENV = "ACTIVE_BROWSER"
 
-DEFAULT_BEST_OF_N = 3
+DEFAULT_BEST_OF_N = 1
 
 # Chrome stores last_visit_time as microseconds since 1601-01-01; this offset converts to unix epoch.
 CHROMIUM_EPOCH_OFFSET_SECONDS = 11644473600

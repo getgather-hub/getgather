@@ -38,7 +38,6 @@ from getgather.zen_distill import (
     autoclick,
     capture_page_artifacts,
     distill,
-    get_domain_attr,
     get_error,
     get_match_attr,
     get_selector,
@@ -335,33 +334,34 @@ def _html_int_attr(element: Tag | None, name: str, default: int = 0) -> int:
         return default
 
 
-async def _maybe_reload_before_trusted_actions(
+async def _maybe_reload_for_matched_pattern(
     page: zd.Tab,
-    hostname: str | None,
+    match: Match,
     patterns: list[Pattern],
-) -> None:
-    """Reload once when a matching pattern requests it (mirrors manual live-view reload)."""
-    for item in patterns:
-        root = item.pattern.find("html")
-        if not isinstance(root, Tag):
-            continue
-        if "rb-reload-before-actions" not in root.attrs:
-            continue
-        domain = get_domain_attr(root)
-        if domain and hostname:
-            local = hostname.startswith("localhost") or hostname.startswith("127.0.0.1")
-            if not local and domain.lower() not in hostname.lower():
-                continue
-        settle_ms = _html_int_attr(root, "rb-settle-ms", 5000)
-        logger.info(f"Reloading page before trusted actions (settle {settle_ms}ms)")
-        await page.reload()
-        reset_cursor_for_tab(page)
-        try:
-            await wait_for_ready_state(page, timeout=30)
-        except Exception as exc:
-            logger.warning(f"Ready state after reload: {exc}")
-        await asyncio.sleep(settle_ms / 1000)
-        return
+) -> bool:
+    """Reload once when the distilled pattern requests it (mirrors manual live-view reload)."""
+    pattern_item = next((item for item in patterns if item.name == match.name), None)
+    if pattern_item is None:
+        return False
+
+    root = pattern_item.pattern.find("html")
+    if not isinstance(root, Tag):
+        return False
+    if "rb-reload-before-actions" not in root.attrs:
+        return False
+
+    settle_ms = _html_int_attr(root, "rb-settle-ms", 5000)
+    logger.info(
+        f"Reloading page before trusted actions for {match.name} (settle {settle_ms}ms)"
+    )
+    await page.reload()
+    reset_cursor_for_tab(page)
+    try:
+        await wait_for_ready_state(page, timeout=30)
+    except Exception as exc:
+        logger.warning(f"Ready state after reload: {exc}")
+    await asyncio.sleep(settle_ms / 1000)
+    return True
 
 
 async def distill_post_loop(
@@ -396,14 +396,7 @@ async def distill_post_loop(
     except Exception as e:
         logger.warning(f"Error waiting for page ready state: {e}")
 
-    try:
-        current_url = str(await page.evaluate("window.location.href", await_promise=True))
-    except Exception:
-        current_url = page.url
-    reload_hostname = (
-        str(urllib.parse.urlparse(current_url).hostname) if current_url else None
-    )
-    await _maybe_reload_before_trusted_actions(page, reload_hostname, patterns)
+    reload_before_actions_done = False
 
     for iteration in range(max):
         logger.debug(f"Iteration {iteration + 1} of {max}")
@@ -460,6 +453,11 @@ async def distill_post_loop(
                 logger.info("Still the same after timeout and need inputs, render the page...")
                 return HTMLResponse(render(str(document.find("body")), options))
             continue
+
+        if not reload_before_actions_done:
+            if await _maybe_reload_for_matched_pattern(page, match, patterns):
+                reload_before_actions_done = True
+                continue
 
         current = match
 
@@ -643,6 +641,7 @@ async def distill_post_loop(
 
         should_submit = False
         submit_delay_ms = _html_int_attr(html_element, "rb-submit-delay-ms", 0)
+        after_submit_delay_ms = _html_int_attr(html_element, "rb-after-submit-delay-ms", 0)
         SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
@@ -718,6 +717,9 @@ async def distill_post_loop(
             await asyncio.sleep(0.25)
 
         if should_submit:
+            if after_submit_delay_ms > 0:
+                logger.info(f"Waiting {after_submit_delay_ms}ms after submit")
+                await asyncio.sleep(after_submit_delay_ms / 1000)
             continue
 
     hostname_attr: str | None = getattr(page, "hostname", None)  # type: ignore[assignment]
