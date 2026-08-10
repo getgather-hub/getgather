@@ -351,9 +351,7 @@ async def _maybe_reload_for_matched_pattern(
         return False
 
     settle_ms = _html_int_attr(root, "rb-settle-ms", 5000)
-    logger.info(
-        f"Reloading page before trusted actions for {match.name} (settle {settle_ms}ms)"
-    )
+    logger.info(f"Reloading page before trusted actions for {match.name} (settle {settle_ms}ms)")
     await page.reload()
     reset_cursor_for_tab(page)
     try:
@@ -432,9 +430,7 @@ async def distill_post_loop(
         trusted_actions = (
             isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
         )
-        pattern_humanize = (
-            isinstance(html_element, Tag) and "rb-humanize" in html_element.attrs
-        )
+        pattern_humanize = isinstance(html_element, Tag) and "rb-humanize" in html_element.attrs
         use_cdp_actions = trusted_actions or pattern_humanize
         humanize = pattern_humanize
         if humanize:

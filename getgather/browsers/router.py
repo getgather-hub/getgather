@@ -212,11 +212,11 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
         n = max(1, explicit if explicit is not None else backend.default_best_of_n)
         if n == 1:
             browser_id = new_browser_id()
-            result = await backend.create_browser(browser_id, origin_ip, target_domain, browser_type)
-        else:
-            browser_id, result = await best_of_n(
-                backend, n, origin_ip, target_domain, browser_type
+            result = await backend.create_browser(
+                browser_id, origin_ip, target_domain, browser_type
             )
+        else:
+            browser_id, result = await best_of_n(backend, n, origin_ip, target_domain, browser_type)
         logger.info(f"Browser {browser_id} is started.")
         return {"browser_id": browser_id, **result}
     except CloakBrowserSeatsExhausted as e:

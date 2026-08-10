@@ -98,7 +98,9 @@ async def test_human_click_element_moves_before_press(monkeypatch: MonkeyPatch) 
 
     await cloak_human.human_click_element(element, tag="input", tab=tab)
     assert move_calls
-    pressed = [_cmd_locals(cmd) for cmd in tab.sent if _cmd_locals(cmd).get("type_") == "mousePressed"]
+    pressed = [
+        _cmd_locals(cmd) for cmd in tab.sent if _cmd_locals(cmd).get("type_") == "mousePressed"
+    ]
     assert pressed
 
 

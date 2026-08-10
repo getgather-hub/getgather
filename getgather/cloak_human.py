@@ -258,9 +258,7 @@ async def human_click_element(
 
     cursor = _cursor_for_tab(tab, cfg)
     raw_mouse = ZendriverRawMouse(tab)
-    await mouse_async.async_human_move(
-        raw_mouse, cursor.x, cursor.y, target.x, target.y, cfg
-    )
+    await mouse_async.async_human_move(raw_mouse, cursor.x, cursor.y, target.x, target.y, cfg)
     cursor.x = target.x
     cursor.y = target.y
     await mouse_async.async_human_click(raw_mouse, is_input, cfg)
@@ -290,6 +288,4 @@ async def human_type_into_element(
 
     raw_keyboard = ZendriverRawKeyboard(tab)
     cdp_session = ZendriverCdpSession(tab)
-    await keyboard_async.async_human_type(
-        None, raw_keyboard, text, cfg, cdp_session=cdp_session
-    )
+    await keyboard_async.async_human_type(None, raw_keyboard, text, cfg, cdp_session=cdp_session)
