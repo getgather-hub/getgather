@@ -214,7 +214,7 @@ def _setup_cdp_url(browser_id: str) -> str:
 
 
 async def get_remote_browser_cdp_url(browser_id: str) -> str:
-    await call_chromefleet_api("GET", browser_id, timeout=10.0)  # retries=3 default
+    await call_chromefleet_api("GET", browser_id, timeout=20.0)  # retries=3 default
     return _setup_cdp_url(browser_id)
 
 
