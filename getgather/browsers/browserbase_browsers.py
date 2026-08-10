@@ -197,10 +197,8 @@ class BrowserbaseBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,  # not supported by Browserbase; always their hosted Chrome
-        snapshot: str | None = None,  # not supported by Browserbase
     ) -> dict[str, Any]:
         del browser_type  # not supported by Browserbase; always their hosted Chrome
-        del snapshot
         headers = {"Content-Type": "application/json", "x-bb-api-key": _api_key()}
         # keepAlive keeps the session running between CDP connections / after disconnects.
         # Without it, Browserbase ends the session the moment the first WS drops, and any

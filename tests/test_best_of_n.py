@@ -30,7 +30,6 @@ class _FakeBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
-        snapshot: str | None = None,
     ) -> dict[str, Any]:
         delay = self.delays.get(browser_id, 0.0)
         if delay:
@@ -155,11 +154,11 @@ async def test_cleanup_losers_waits_for_materialization(monkeypatch: MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_best_of_n_passes_origin_ip_target_domain_browser_type_and_snapshot(
+async def test_best_of_n_passes_origin_ip_target_domain_and_browser_type(
     monkeypatch: MonkeyPatch,
 ) -> None:
     _patch_ids(monkeypatch, ["b0", "b1"])
-    seen: list[tuple[str, str | None, str | None, str | None, str | None]] = []
+    seen: list[tuple[str, str | None, str | None, str | None]] = []
 
     class _Tracking(_FakeBackend):
         async def create_browser(
@@ -168,14 +167,13 @@ async def test_best_of_n_passes_origin_ip_target_domain_browser_type_and_snapsho
             origin_ip: str | None,
             target_domain: str | None,
             browser_type: str | None,
-            snapshot: str | None = None,
         ) -> dict[str, Any]:
-            seen.append((browser_id, origin_ip, target_domain, browser_type, snapshot))
+            seen.append((browser_id, origin_ip, target_domain, browser_type))
             self.existing.add(browser_id)
             return {"id": browser_id}
 
-    await best_of_n(_Tracking(), 2, "1.2.3.4", "amazon.com", "cloak", "my-snapshot")
+    await best_of_n(_Tracking(), 2, "1.2.3.4", "amazon.com", "cloak")
     assert set(seen) == {
-        ("b0", "1.2.3.4", "amazon.com", "cloak", "my-snapshot"),
-        ("b1", "1.2.3.4", "amazon.com", "cloak", "my-snapshot"),
+        ("b0", "1.2.3.4", "amazon.com", "cloak"),
+        ("b1", "1.2.3.4", "amazon.com", "cloak"),
     }
