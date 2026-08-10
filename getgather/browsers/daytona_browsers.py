@@ -189,7 +189,14 @@ class DaytonaBackend:
             sandbox = await self._ensure(browser_id, browser_type)
             # Proxy is mandatory when configured: let ProxyVerificationError propagate (the endpoint
             # maps it to 500) so the client can retry rather than get an unproxied browser.
-            await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
+            try:
+                await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
+            except ProxyVerificationError:
+                # A sandbox that fails proxy verification is unusable (wrong/no egress IP) and
+                # would otherwise sit around until Daytona's auto_stop/auto_delete TTL. Delete now.
+                logger.warning(f"Deleting sandbox {sandbox.name} after proxy verification failure")
+                await sandbox.delete()
+                raise
             return await self._get_info(sandbox)
 
     async def get_browser(
