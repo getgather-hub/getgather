@@ -29,6 +29,7 @@ from getgather.browser import (
     wait_for_ready_state,
     zen_navigate_with_retry,
 )
+from getgather.cloak_human import human_pre_action_idle, reset_cursor_for_tab
 from getgather.config import settings
 from getgather.mcp.html_renderer import DEFAULT_TITLE, render_form
 from getgather.zen_distill import (
@@ -37,6 +38,7 @@ from getgather.zen_distill import (
     autoclick,
     capture_page_artifacts,
     distill,
+    get_domain_attr,
     get_error,
     get_match_attr,
     get_selector,
@@ -321,6 +323,47 @@ def is_incognito_request(headers: dict[str, str]) -> bool:
     return headers.get("x-incognito", "0") == "1"
 
 
+def _html_int_attr(element: Tag | None, name: str, default: int = 0) -> int:
+    if element is None:
+        return default
+    raw = element.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw))
+    except ValueError:
+        return default
+
+
+async def _maybe_reload_before_trusted_actions(
+    page: zd.Tab,
+    hostname: str | None,
+    patterns: list[Pattern],
+) -> None:
+    """Reload once when a matching pattern requests it (mirrors manual live-view reload)."""
+    for item in patterns:
+        root = item.pattern.find("html")
+        if not isinstance(root, Tag):
+            continue
+        if "rb-reload-before-actions" not in root.attrs:
+            continue
+        domain = get_domain_attr(root)
+        if domain and hostname:
+            local = hostname.startswith("localhost") or hostname.startswith("127.0.0.1")
+            if not local and domain.lower() not in hostname.lower():
+                continue
+        settle_ms = _html_int_attr(root, "rb-settle-ms", 5000)
+        logger.info(f"Reloading page before trusted actions (settle {settle_ms}ms)")
+        await page.reload()
+        reset_cursor_for_tab(page)
+        try:
+            await wait_for_ready_state(page, timeout=30)
+        except Exception as exc:
+            logger.warning(f"Ready state after reload: {exc}")
+        await asyncio.sleep(settle_ms / 1000)
+        return
+
+
 async def distill_post_loop(
     page: zd.Tab,
     id: str,
@@ -352,6 +395,15 @@ async def distill_post_loop(
         logger.debug("Page ready state is complete")
     except Exception as e:
         logger.warning(f"Error waiting for page ready state: {e}")
+
+    try:
+        current_url = str(await page.evaluate("window.location.href", await_promise=True))
+    except Exception:
+        current_url = page.url
+    reload_hostname = (
+        str(urllib.parse.urlparse(current_url).hostname) if current_url else None
+    )
+    await _maybe_reload_before_trusted_actions(page, reload_hostname, patterns)
 
     for iteration in range(max):
         logger.debug(f"Iteration {iteration + 1} of {max}")
@@ -387,6 +439,18 @@ async def distill_post_loop(
         trusted_actions = (
             isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
         )
+        pattern_humanize = (
+            isinstance(html_element, Tag) and "rb-humanize" in html_element.attrs
+        )
+        use_cdp_actions = trusted_actions or pattern_humanize
+        humanize = pattern_humanize
+        if humanize:
+            element_config = ElementConfig(
+                action_delay_ms=action_delay_ms,
+                humanize=True,
+            )
+        elif use_cdp_actions and action_delay_ms > 0:
+            element_config = ElementConfig(action_delay_ms=action_delay_ms)
 
         if match.distilled == current.distilled:
             logger.info(f"Still the same: {match.name}")
@@ -398,6 +462,12 @@ async def distill_post_loop(
             continue
 
         current = match
+
+        if use_cdp_actions:
+            pre_action_ms = _html_int_attr(html_element, "rb-pre-action-idle-ms", 0)
+            if pre_action_ms > 0:
+                logger.info(f"Pre-action idle mouse for {pre_action_ms}ms")
+                await human_pre_action_idle(page, pre_action_ms)
 
         if await terminate(distilled):
             logger.info("Finished!")
@@ -536,7 +606,7 @@ async def distill_post_loop(
                         names.append(name_str)
                         input["value"] = value
                         current.distilled = str(document)
-                        if trusted_actions and input_type not in ("checkbox", "radio"):
+                        if use_cdp_actions and input_type not in ("checkbox", "radio"):
                             text_element = await page_query_selector(
                                 page,
                                 selector if selector is not None else "",
@@ -572,17 +642,21 @@ async def distill_post_loop(
                 })
 
         should_submit = False
+        submit_delay_ms = _html_int_attr(html_element, "rb-submit-delay-ms", 0)
         SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
                 logger.info("Submitting form, all fields are filled...")
+                if submit_delay_ms > 0:
+                    logger.info(f"Waiting {submit_delay_ms}ms before submit")
+                    await asyncio.sleep(submit_delay_ms / 1000)
                 for submit_button in document.select(SUBMIT_BUTTON):
                     submit_selector, frame_selector = get_selector(
                         str(get_match_attr(submit_button))
                     )
                     if not submit_selector:
                         continue
-                    if trusted_actions:
+                    if use_cdp_actions:
                         submit_element = await page_query_selector(
                             page,
                             submit_selector,
@@ -591,8 +665,7 @@ async def distill_post_loop(
                         )
                         if submit_element:
                             logger.info(f"Trusted CDP mouse click on {submit_selector}")
-                            await submit_element.element.mouse_click()
-                            await asyncio.sleep(0.25)
+                            await submit_element.trusted_click()
                         else:
                             logger.warning(f"Trusted submit could not find {submit_selector}")
                     else:

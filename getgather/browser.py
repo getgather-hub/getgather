@@ -22,6 +22,11 @@ from zendriver.core.config import Config
 from zendriver.core.connection import Connection, ProtocolException
 
 from getgather.browsers.fleet_browsers import build_chromefleet_headers, call_chromefleet_api
+from getgather.cloak_human import (
+    CloakHumanizeUnavailable,
+    human_click_element,
+    human_type_into_element,
+)
 from getgather.config import FRIENDLY_CHARS, settings
 
 _ws_extra_headers_var: ContextVar[dict[str, str] | None] = ContextVar(
@@ -477,6 +482,7 @@ class ElementConfig:
     typing_char_delay_min: float = 0.01
     typing_char_delay_max: float = 0.05
     action_delay_ms: float = 0
+    humanize: bool = False
 
 
 class Element:
@@ -633,6 +639,9 @@ class Element:
                 raise
 
     async def type_text(self, text: str) -> None:
+        if self.config.humanize:
+            await self.human_type_text(text)
+            return
         if self.config.action_delay_ms > 0:
             await asyncio.sleep(self.config.action_delay_ms / 1000)
         await self._clear_input()
@@ -641,6 +650,43 @@ class Element:
             await asyncio.sleep(
                 random.uniform(self.config.typing_char_delay_min, self.config.typing_char_delay_max)
             )
+
+    async def human_type_text(self, text: str) -> None:
+        if self.config.action_delay_ms > 0:
+            await asyncio.sleep(self.config.action_delay_ms / 1000)
+        try:
+            await human_type_into_element(
+                self.element,
+                tag=self.tag,
+                tab=self.page,
+                text=text,
+            )
+        except CloakHumanizeUnavailable as exc:
+            logger.warning(f"humanize unavailable, falling back to type_text: {exc}")
+            self.config.humanize = False
+            await self.type_text(text)
+
+    async def human_click(self) -> None:
+        if self.config.action_delay_ms > 0:
+            await asyncio.sleep(self.config.action_delay_ms / 1000)
+        try:
+            await human_click_element(
+                self.element,
+                tag=self.tag,
+                tab=self.page,
+            )
+        except CloakHumanizeUnavailable as exc:
+            logger.warning(f"humanize unavailable, falling back to mouse_click: {exc}")
+            await self.element.mouse_click()
+        await asyncio.sleep(0.25)
+
+    async def trusted_click(self) -> None:
+        """CDP-trusted click; humanized when ElementConfig.humanize is set."""
+        if self.config.humanize:
+            await self.human_click()
+        else:
+            await self.element.mouse_click()
+            await asyncio.sleep(0.25)
 
     async def css_click(self) -> None:
         if not self.css_selector:
