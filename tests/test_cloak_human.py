@@ -7,6 +7,22 @@ from pytest import MonkeyPatch
 from getgather import cloak_human
 
 
+def _first_range_value(r: tuple[float, float]) -> float:
+    return r[0]
+
+
+def _fake_click_target(_box: dict[str, float], _is_input: bool, _cfg: Any) -> MagicMock:
+    return MagicMock(x=50, y=10)
+
+
+def _fake_resolve_config(_preset: str) -> MagicMock:
+    return MagicMock(
+        initial_cursor_x=(1, 1),
+        initial_cursor_y=(2, 2),
+        click_input_x_range=(0.1, 0.2),
+    )
+
+
 class _FakeTab:
     def __init__(self) -> None:
         self.sent: list[Any] = []
@@ -83,15 +99,11 @@ async def test_human_click_element_moves_before_press(monkeypatch: MonkeyPatch) 
         "_require_cloak_human",
         lambda: (
             MagicMock(
-                resolve_config=lambda preset: MagicMock(
-                    initial_cursor_x=(1, 1),
-                    initial_cursor_y=(2, 2),
-                    click_input_x_range=(0.1, 0.2),
-                ),
-                rand_range=lambda r: r[0],
+                resolve_config=_fake_resolve_config,
+                rand_range=_first_range_value,
             ),
             MagicMock(),
-            MagicMock(click_target=lambda box, is_input, cfg: MagicMock(x=50, y=10)),
+            MagicMock(click_target=_fake_click_target),
             MagicMock(async_human_move=fake_move, async_human_click=fake_click),
         ),
     )
@@ -137,8 +149,13 @@ def test_cursor_for_tab_works_on_unhashable_tab(monkeypatch: MonkeyPatch) -> Non
     monkeypatch.setattr(
         cloak_human,
         "_require_cloak_human",
-        lambda: (MagicMock(rand_range=lambda r: r[0]), MagicMock(), MagicMock(), MagicMock()),
+        lambda: (
+            MagicMock(rand_range=_first_range_value),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        ),
     )
     cursor = cloak_human._cursor_for_tab(tab, cfg)  # pyright: ignore[reportPrivateUsage]
     assert cursor.initialized is True
-    assert getattr(tab, cloak_human._CLOAK_CURSOR_ATTR) is cursor
+    assert getattr(tab, cloak_human._CLOAK_CURSOR_ATTR) is cursor  # pyright: ignore[reportPrivateUsage]

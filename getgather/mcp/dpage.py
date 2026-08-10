@@ -419,18 +419,15 @@ async def distill_post_loop(
         inputs = document.find_all("input")
         pending_actions: list[dict[str, str]] = []
         html_element = document.find("html")
+        html_tag = html_element if isinstance(html_element, Tag) else None
         action_delay_ms = (
-            int(str(html_element.get("rb-action-delay") or 0))
-            if isinstance(html_element, Tag)
-            else 0
+            int(str(html_tag.get("rb-action-delay") or 0)) if html_tag is not None else 0
         )
         element_config = (
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
         )
-        trusted_actions = (
-            isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
-        )
-        pattern_humanize = isinstance(html_element, Tag) and "rb-humanize" in html_element.attrs
+        trusted_actions = html_tag is not None and "rb-trusted-actions" in html_tag.attrs
+        pattern_humanize = html_tag is not None and "rb-humanize" in html_tag.attrs
         use_cdp_actions = trusted_actions or pattern_humanize
         humanize = pattern_humanize
         if humanize:
@@ -458,7 +455,7 @@ async def distill_post_loop(
         current = match
 
         if use_cdp_actions:
-            pre_action_ms = _html_int_attr(html_element, "rb-pre-action-idle-ms", 0)
+            pre_action_ms = _html_int_attr(html_tag, "rb-pre-action-idle-ms", 0)
             if pre_action_ms > 0:
                 logger.info(f"Pre-action idle mouse for {pre_action_ms}ms")
                 await human_pre_action_idle(page, pre_action_ms)
@@ -636,8 +633,8 @@ async def distill_post_loop(
                 })
 
         should_submit = False
-        submit_delay_ms = _html_int_attr(html_element, "rb-submit-delay-ms", 0)
-        after_submit_delay_ms = _html_int_attr(html_element, "rb-after-submit-delay-ms", 0)
+        submit_delay_ms = _html_int_attr(html_tag, "rb-submit-delay-ms", 0)
+        after_submit_delay_ms = _html_int_attr(html_tag, "rb-after-submit-delay-ms", 0)
         SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
