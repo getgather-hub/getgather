@@ -1,6 +1,8 @@
 import asyncio
 import json
 import random
+import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -73,6 +75,130 @@ def _inject_headers_into_websockets(extra_headers: dict[str, str] | None = None)
         yield
     finally:
         _ws_extra_headers_var.reset(token)
+
+
+# Every remote browser we attach to owns a live CDP websocket. Nothing else holds a
+# reference we can reach later — zendriver's own registry is a module-level set that is
+# only ever added to — so without this map `close_local_browsers` has nothing to close and
+# the socket survives until the process dies. Backends that relay CDP through this process
+# (browserbase, daytona) open one per page operation, so the sockets accumulate fast; a
+# CHROMEFLEET_URL deployment hands the socket to the external fleet and never lands here.
+_local_instances: dict[str, list[zd.Browser]] = defaultdict(list)
+_last_used: dict[str, float] = {}
+_atexit_registered = False
+
+
+def _track_instance(browser_id: str, instance: zd.Browser) -> None:
+    _local_instances[browser_id].append(instance)
+    _last_used[browser_id] = time.monotonic()
+
+
+def _is_live(instance: zd.Browser) -> bool:
+    try:
+        if instance.stopped:
+            return False
+        conn = instance.connection
+        return conn is not None and not conn.closed
+    except Exception:
+        # Any error introspecting the socket means we cannot trust it for reuse.
+        return False
+
+
+def _reusable_instance(browser_id: str) -> zd.Browser | None:
+    """Most recently attached instance for this id whose CDP socket is still open."""
+    for instance in reversed(_local_instances.get(browser_id, [])):
+        if _is_live(instance):
+            _last_used[browser_id] = time.monotonic()
+            return instance
+    return None
+
+
+def _register_atexit_once() -> None:
+    """Register a single process-level shutdown hook.
+
+    Registering per browser (the previous behaviour) leaked twice over: the callback list
+    grew without bound, and each closure held a hard reference to its browser, so nothing
+    was ever collectable.
+    """
+    global _atexit_registered
+    if _atexit_registered:
+        return
+    _atexit_registered = True
+
+    async def _close_all() -> None:
+        for browser_id in list(_local_instances):
+            await close_local_browsers(browser_id)
+
+    asyncio_atexit.register(_close_all)  # type: ignore[reportUnknownMemberType]
+
+
+async def close_local_browsers(browser_id: str) -> int:
+    """Stop and forget every local browser attached to `browser_id`.
+
+    Returns how many were closed. Safe to call for an unknown id, and safe to call twice.
+    """
+    instances = _local_instances.pop(browser_id, [])
+    _last_used.pop(browser_id, None)
+    closed = 0
+    for instance in instances:
+        try:
+            # Each target/tab owns its own CDP socket. `stop()` does not reliably close them,
+            # and they are the loopback connections that accumulate, so close them explicitly
+            # before stopping the browser.
+            for target in list(getattr(instance, "targets", []) or []):
+                conn = getattr(target, "connection", None) or target
+                aclose = getattr(conn, "aclose", None)
+                if aclose is None:
+                    continue
+                try:
+                    await aclose()
+                except Exception:
+                    pass
+            if not instance.stopped:
+                await instance.stop()
+            closed += 1
+        except Exception as e:
+            # A browser whose remote side is already gone raises on stop; the point of this
+            # call is to release our end, so keep going and still drop the reference.
+            logger.debug(
+                f"Ignoring error stopping local browser {browser_id}: {type(e).__name__}: {e}"
+            )
+        finally:
+            util.get_registered_instances().discard(instance)
+    if closed:
+        logger.info(f"Closed {closed} local browser connection(s) for {browser_id}")
+    return closed
+
+
+def local_instance_count() -> int:
+    """Total tracked instances — for leak assertions in tests and /health style probes."""
+    return sum(len(v) for v in _local_instances.values())
+
+
+async def reap_idle_browsers(ttl_seconds: float) -> int:
+    """Close instances for any browser_id untouched for `ttl_seconds`.
+
+    `delete_browser` only runs on the happy path: a sync that strands (its row stuck at
+    `syncing`, its remote session already expired) never calls it, so its sockets would be
+    held until the process dies. This is the only path that reaches those.
+    """
+    now = time.monotonic()
+    stale = [bid for bid, last in _last_used.items() if now - last > ttl_seconds]
+    total = 0
+    for browser_id in stale:
+        n = await close_local_browsers(browser_id)
+        if n:
+            logger.warning(f"Reaped {n} idle local browser connection(s) for {browser_id}")
+        total += n
+    return total
+
+
+async def reap_idle_browsers_if_enabled() -> int:
+    """Reaper entry point for the app's existing background loop (see `main.lifespan`)."""
+    ttl = float(settings.BROWSER_LOCAL_IDLE_TTL_SECONDS)
+    if ttl <= 0:
+        return 0
+    return await reap_idle_browsers(ttl)
 
 
 async def _create_browser_from_cdp_websocket(
@@ -166,13 +292,8 @@ async def _create_browser_from_cdp_websocket(
                 f"browser_id={browser_id}"
             )
     util.get_registered_instances().add(instance)
-
-    async def browser_atexit() -> None:
-        if not instance.stopped:
-            await instance.stop()
-        await instance._cleanup_temporary_profile()  # type: ignore[reportPrivateUsage]
-
-    asyncio_atexit.register(browser_atexit)  # type: ignore[reportUnknownMemberType]
+    _track_instance(browser_id, instance)
+    _register_atexit_once()
 
     instance.id = browser_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     return instance
@@ -220,6 +341,13 @@ async def get_remote_browser_cdp_url(browser_id: str) -> str:
 
 async def get_remote_browser(browser_id: str) -> zd.Browser | None:
     logger.debug(f"Finding the ChromeFleet browser: {browser_id}")
+    # Reuse the existing attachment if its socket is still open. Without this every page
+    # operation minted a fresh zd.Browser and a fresh CDP websocket — ~31 per browser on
+    # the backends that relay through this process — which is the bulk of the leak.
+    reused = _reusable_instance(browser_id)
+    if reused is not None:
+        return reused
+
     try:
         await call_chromefleet_api("GET", browser_id)
     except Exception:

@@ -57,6 +57,18 @@ class BrowserSettings(BaseSettings):
     # environment so the server can boot without it when another backend is selected.
     BROWSERBASE_API_KEY: str = ""
 
+    # Session lifetime in seconds, sent as `timeout` on session create. Without it Browserbase
+    # applies the project default of 300s, which expires the session mid-job on anything longer:
+    # a tap-connect purchase-history sync takes 7-10 minutes, and every CDP connect after the
+    # expiry returns HTTP 410 Gone (the same failure `keepAlive` exists to prevent).
+    BROWSERBASE_SESSION_TIMEOUT: int = 900
+
+    # Idle TTL for locally-attached browsers. `delete_browser` only runs on the happy path, so a
+    # sync that strands never releases its CDP sockets; the reaper closes anything untouched for
+    # this long. Must exceed the longest legitimate gap between operations on one browser
+    # (observed syncs run 5-10 min). 0 disables the reaper.
+    BROWSER_LOCAL_IDLE_TTL_SECONDS: int = 1200
+
     # Best-of-N cold-create: on a fresh browser, race this many candidates in parallel and keep the
     # first whose `create_browser` fully succeeds.
     # Losers are deleted in the background. Set to 1 to disable the race and create a single

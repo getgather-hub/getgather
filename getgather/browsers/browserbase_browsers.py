@@ -203,7 +203,12 @@ class BrowserbaseBackend:
         # keepAlive keeps the session running between CDP connections / after disconnects.
         # Without it, Browserbase ends the session the moment the first WS drops, and any
         # subsequent connect to the same signingKey returns HTTP 410 Gone.
-        body: dict[str, Any] = {"keepAlive": True}
+        # keepAlive does not override the project's session timeout, so send one explicitly —
+        # otherwise the 300s default expires the session and produces that same 410 anyway.
+        body: dict[str, Any] = {
+            "keepAlive": True,
+            "timeout": settings.BROWSERBASE_SESSION_TIMEOUT,
+        }
         proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
         if proxy_config:
             proxy_url = proxy_config.get_proxy_url(browser_id)

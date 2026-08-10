@@ -15,7 +15,11 @@ from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from getgather.browser import create_remote_browser, terminate_remote_browser
+from getgather.browser import (
+    create_remote_browser,
+    reap_idle_browsers_if_enabled,
+    terminate_remote_browser,
+)
 from getgather.browsers.router import backend, router as browsers_router
 from getgather.config import PROJECT_DIR, settings
 from getgather.logs import MCPLoggingContextMiddleware
@@ -53,6 +57,14 @@ async def lifespan(app: FastAPI):
                     await backend.cleanup_idle()
                 except Exception as e:
                     logger.error(f"Idle cleanup failed: {e}")
+                try:
+                    # Backstop for locally-attached browsers whose owner never called
+                    # DELETE (a stranded sync). Separate try: a backend cleanup failure
+                    # must not skip the reaper, since the reaper is what prevents the
+                    # socket leak from wedging the machine.
+                    await reap_idle_browsers_if_enabled()
+                except Exception as e:
+                    logger.error(f"Browser reaper failed: {e}")
 
     background_task = asyncio.create_task(timer_loop())
 

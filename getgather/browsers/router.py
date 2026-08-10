@@ -137,7 +137,10 @@ async def websocket_proxy(
             remote_url,
             ping_interval=60,
             ping_timeout=30,
-            close_timeout=7200,
+            # Was 7200. That is how long the close handshake may block before the socket is
+            # force-closed, so a peer that never answers pinned the fd (and its buffers) for
+            # two hours. Nothing here needs more than a few seconds to shut down.
+            close_timeout=10,
             max_size=10 * 1024 * 1024,
         ) as remote_ws:
             logger.info("[CDP] Connected to remote WebSocket")
@@ -193,6 +196,16 @@ async def websocket_proxy(
         logger.error(f"[CDP] Unexpected error: {type(e).__name__}: {e}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4500, reason="Internal proxy error")
+    finally:
+        # The remote leg is closed by the `async with`, but the inbound leg was only closed on
+        # the error paths above. On the normal path it was left to the caller, so a client that
+        # never disconnects (in-process zendriver holding a CDP socket) kept both ends of a
+        # loopback pair alive for the life of the process.
+        if client_ws.client_state == WebSocketState.CONNECTED:
+            try:
+                await client_ws.close()
+            except Exception as e:
+                logger.debug(f"[CDP] Ignoring error closing client socket: {type(e).__name__}: {e}")
 
 
 @router.post("/api/v1/browsers")
@@ -242,19 +255,31 @@ async def create_browser(browser_id: str, request: Request) -> dict[str, Any]:
 
 @router.delete("/api/v1/browsers/{browser_id}")
 async def delete_browser(browser_id: str) -> dict[str, Any]:
+    # Imported here rather than at module scope: getgather.browser imports from
+    # getgather.browsers.fleet_browsers, so a top-level import would close the cycle.
+    from getgather.browser import close_local_browsers
+
     logger.info(f"Stopping browser {browser_id}...")
     if not await backend.browser_exists(browser_id):
+        # Release our end even when the remote is already gone, or a browser that expired
+        # server-side (e.g. a Browserbase session past its timeout) leaves its CDP sockets
+        # open in this process forever.
+        await close_local_browsers(browser_id)
         detail = f"Browser {browser_id} not found!"
         logger.warning(detail)
         raise HTTPException(status_code=404, detail=detail)
     try:
         result = await backend.delete_browser(browser_id)
-        logger.info(f"Browser {browser_id} is stopped.")
         return result
     except Exception as e:
         detail = f"Unable to stop browser {browser_id}!"
         logger.error(f"{detail} Exception={e}")
         raise HTTPException(status_code=500, detail=detail)
+    finally:
+        # Deleting the remote browser does not touch the zd.Browser objects this process
+        # holds against it; without this their sockets and buffers stay resident.
+        await close_local_browsers(browser_id)
+        logger.info(f"Browser {browser_id} is stopped.")
 
 
 @router.get("/api/v1/browsers/{browser_id}")
