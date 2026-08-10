@@ -14,17 +14,61 @@
 
     <div rb-optional rb-match="ps-alert-bar div[slot='heading']"></div>
 
-    <input
-      name="month"
-      type="text"
-      data-testid="month"
-      rb-match="input#month"
-      placeholder="Month"
-    />
+    <div class="dob-container">
+      <input
+        name="month"
+        type="text"
+        inputmode="numeric"
+        data-testid="month"
+        rb-match="input#month"
+        placeholder="MM"
+        maxlength="2"
+      />
+      <span class="dob-separator" aria-hidden="true">/</span>
+      <input
+        name="day"
+        type="text"
+        inputmode="numeric"
+        data-testid="day"
+        rb-match="input#day"
+        placeholder="DD"
+        maxlength="2"
+      />
+      <span class="dob-separator" aria-hidden="true">/</span>
+      <input
+        name="year"
+        type="text"
+        inputmode="numeric"
+        data-testid="year"
+        rb-match="input#year"
+        placeholder="YYYY"
+        maxlength="4"
+      />
+    </div>
 
-    <input name="day" type="text" data-testid="day" rb-match="input#day" placeholder="Day" />
+    <style>
+      .dob-container {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.5rem;
+      }
 
-    <input name="year" type="text" data-testid="year" rb-match="input#year" placeholder="Year" />
+      .dob-container input {
+        width: 4.5rem;
+        text-align: center;
+      }
+
+      .dob-container input[name="year"] {
+        width: 5.5rem;
+      }
+
+      .dob-separator {
+        color: #6b7280;
+        font-weight: 500;
+        user-select: none;
+      }
+    </style>
 
     <button
       type="submit"

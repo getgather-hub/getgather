@@ -3,7 +3,10 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
+
+app = 'remotebrowser-daytona-cloakbrowser-pro'
 primary_region = 'sjc'
+org = 'yuxi-yao'
 
 [build]
 
