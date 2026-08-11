@@ -2,6 +2,7 @@ import asyncio
 from typing import Any, Protocol, cast, runtime_checkable
 
 import httpx
+import logfire
 from fastapi import WebSocket
 from loguru import logger
 from nanoid import generate
@@ -34,12 +35,13 @@ async def get_browser_websocket_debugger_url(cdp_base_url: str) -> str:
     but no pre-baked wss connect URL: their `get_cdp_websocket_remote_url` resolves the
     cdp base URL (per browser) and then this helper does the standard /json/version probe.
     """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(f"{cdp_base_url}/json/version")
-        response.raise_for_status()
-        data: dict[str, Any] = response.json()
-        logger.debug(f"[CDP] CDP json version gives {data}")
-        return rewrite_ws_url(str(data["webSocketDebuggerUrl"]), cdp_base_url)
+    with logfire.span("[XRAY] cdp probe /json/version", cdp_host=httpx.URL(cdp_base_url).host):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{cdp_base_url}/json/version")
+            response.raise_for_status()
+            data: dict[str, Any] = response.json()
+            logger.debug(f"[CDP] CDP json version gives {data}")
+            return rewrite_ws_url(str(data["webSocketDebuggerUrl"]), cdp_base_url)
 
 
 async def get_page_websocket_debugger_url(cdp_base_url: str, page_id: str) -> str | None:
@@ -51,17 +53,24 @@ async def get_page_websocket_debugger_url(cdp_base_url: str, page_id: str) -> st
     browser) and then this helper does the standard /json/list probe. Returns None when the
     page id is not present in the listing (page already closed or not yet registered).
     """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(f"{cdp_base_url}/json/list")
-        response.raise_for_status()
-        raw: Any = response.json()
-        if not isinstance(raw, list):
+    with logfire.span("[XRAY] cdp probe /json/list", cdp_host=httpx.URL(cdp_base_url).host) as span:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{cdp_base_url}/json/list")
+            response.raise_for_status()
+            raw: Any = response.json()
+            if not isinstance(raw, list):
+                span.set_attribute("outcome", "not-a-list")
+                return None
+            pages = cast(list[dict[str, Any]], raw)
+            span.set_attribute("page_count", len(pages))
+            for item in pages:
+                if item.get("id") == page_id:
+                    ws_url = item.get("webSocketDebuggerUrl")
+                    span.set_attribute("outcome", "found" if ws_url else "found-no-ws-url")
+                    return rewrite_ws_url(str(ws_url), cdp_base_url) if ws_url else None
+            # A miss here costs the router a full 3s retry sleep, so record it explicitly.
+            span.set_attribute("outcome", "page-id-absent")
             return None
-        for item in cast(list[dict[str, Any]], raw):
-            if item.get("id") == page_id:
-                ws_url = item.get("webSocketDebuggerUrl")
-                return rewrite_ws_url(str(ws_url), cdp_base_url) if ws_url else None
-        return None
 
 
 def new_browser_id() -> str:

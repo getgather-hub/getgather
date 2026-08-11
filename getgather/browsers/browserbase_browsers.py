@@ -220,6 +220,13 @@ class BrowserbaseBackend:
         connect_url = str(data["connectUrl"])
         self._sessions[bb_id] = connect_url
         logger.info(f"Browserbase session created: id={bb_id} connectUrl={connect_url}")
+        # `timeout` is unset in the request body, so expiresAt reflects the project's
+        # defaultTimeout (300s on project d50de03f). Nothing evicts `_sessions` on expiry, so
+        # log the cache size here to watch dead entries accumulate across runs.
+        logger.info(
+            f"[BB-STATE] created id={bb_id} expiresAt={data.get('expiresAt')} "
+            f"keepAlive={data.get('keepAlive')} cached={len(self._sessions)}"
+        )
         await self._wait_until_cdp_ready(connect_url, bb_id)
         return {"browser_id": bb_id, "status": "created", "ip": None}
 
@@ -355,6 +362,7 @@ class BrowserbaseBackend:
         # clear the local id -> connectUrl mapping, regardless of whether the upstream call
         # succeeds (a 404 means the session is already gone, which is the desired state).
         self._sessions.pop(browser_id, None)
+        logger.info(f"[BB-STATE] released id={browser_id} cached={len(self._sessions)}")
         try:
             headers = {"Content-Type": "application/json", "x-bb-api-key": _api_key()}
             body = {"status": "REQUEST_RELEASE"}
@@ -375,6 +383,28 @@ class BrowserbaseBackend:
 
     async def list_browser_ids(self) -> list[str]:
         return list(self._sessions.keys())
+
+    async def log_session_state(self, browser_id: str, context: str) -> None:
+        """Log Browserbase's own view of a session. Called by the router when a probe fails; the
+        local `_sessions` map has no expiry, so only the API can say whether an id is still live.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    f"{BROWSERBASE_API_URL}/{browser_id}", headers={"x-bb-api-key": _api_key()}
+                )
+            data: dict[str, Any] = response.json()
+            logger.error(
+                f"[BB-STATE] {context}: id={browser_id} http={response.status_code} "
+                f"status={data.get('status')} startedAt={data.get('startedAt')} "
+                f"endedAt={data.get('endedAt')} expiresAt={data.get('expiresAt')} "
+                f"keepAlive={data.get('keepAlive')} cached={len(self._sessions)} "
+                f"cached_ids={list(self._sessions.keys())}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[BB-STATE] {context}: id={browser_id} lookup failed: {type(e).__name__}: {e}"
+            )
 
     async def cleanup_idle(self) -> list[str]:
         return []
