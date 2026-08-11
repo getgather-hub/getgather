@@ -3,6 +3,7 @@ import html
 import json
 from typing import Any
 
+import httpx
 import websockets
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -49,6 +50,14 @@ async def get_page_list(browser_id: str) -> list[str]:
     # works uniformly for every backend that exposes a browser-level socket (Browserbase via
     # connectUrl, Podman/Daytona via /json/version discovery); Fleet relays /devtools to its
     # own proxy and never reaches this path, so open_browser_cdp_client returns None there.
+    try:
+        client = await open_browser_cdp_client(browser_id)
+    except (BrowserNotFound, httpx.HTTPStatusError) as e:
+        # A Daytona sandbox that is stopped or archived answers 400/404 on its signed
+        # preview URL, and a deleted one raises BrowserNotFound (Browserbase answers 410
+        # for an ended session). In every case the browser has no reachable pages.
+        logger.info(f"[CDP] browser {browser_id} unreachable: {type(e).__name__}")
+        return []
     client = await open_browser_cdp_client(browser_id)
     if client is None:
         return []
