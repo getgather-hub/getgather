@@ -2,6 +2,7 @@ import asyncio
 import time
 from typing import Any
 
+import logfire
 from daytona import (
     AsyncDaytona,
     AsyncSandbox,
@@ -10,6 +11,7 @@ from daytona import (
     DaytonaConflictError,
     DaytonaNotFoundError,
     ListSandboxesQuery,
+    SandboxState,
 )
 from fastapi import WebSocket
 from loguru import logger
@@ -220,11 +222,29 @@ class DaytonaBackend:
         return await self._get(_sandbox_name(browser_id)) is not None
 
     async def list_browser_ids(self) -> list[str]:
+        return await self._list_browser_ids(live_only=False)
+
+    async def list_live_browser_ids(self) -> list[str]:
+        """Only sandboxes that are actually running, for callers that intend to reach CDP.
+
+        A STOPPED or ARCHIVED sandbox has no reachable browser — its signed preview URL answers
+        HTTP 400 — so probing one costs a round-trip and an error. Archived entries are never
+        reaped (Daytona's `auto_delete_interval` counts *continuously stopped* time, and archiving
+        ends that state), so they dominate the raw list: 87 entries observed, of which 50 were
+        ARCHIVED and the oldest a week old. Kept separate from `list_browser_ids` so the
+        `GET /api/v1/browsers` listing keeps reporting every sandbox.
+        """
+        return await self._list_browser_ids(live_only=True)
+
+    async def _list_browser_ids(self, *, live_only: bool) -> list[str]:
         browser_ids: list[str] = []
         async for sandbox in self.client.list(ListSandboxesQuery(labels={LABEL_FLEET: "1"})):
             # A just-deleted sandbox lingers briefly as `DESTROYED_<name>_<ts>`; only our names count.
-            if sandbox.name and sandbox.name.startswith(BROWSER_NAME_PREFIX):
-                browser_ids.append(_browser_id_from_name(sandbox.name))
+            if not sandbox.name or not sandbox.name.startswith(BROWSER_NAME_PREFIX):
+                continue
+            if live_only and sandbox.state != SandboxState.STARTED:
+                continue
+            browser_ids.append(_browser_id_from_name(sandbox.name))
         return browser_ids
 
     async def cleanup_idle(self) -> list[str]:
@@ -233,13 +253,21 @@ class DaytonaBackend:
         return []
 
     async def get_cdp_base_url(self, browser_id: str) -> str:
-        sandbox = await self._get(_sandbox_name(browser_id))
-        if sandbox is None:
-            raise BrowserNotFound(browser_id)
-        signed = await sandbox.create_signed_preview_url(
-            CDP_PORT, expires_in_seconds=SIGNED_URL_TTL_SECONDS
-        )
-        return signed.url
+        # Two Daytona control-plane round-trips (app.daytona.io, public internet) on EVERY cdp and
+        # devtools connect. Timed separately so the tail can be attributed to the control plane vs
+        # the preview proxy.
+        with logfire.span("[XRAY] daytona resolve cdp base url", browser_id=browser_id) as span:
+            with logfire.span("[XRAY] daytona sandbox lookup", browser_id=browser_id):
+                sandbox = await self._get(_sandbox_name(browser_id))
+            if sandbox is None:
+                span.set_attribute("outcome", "not-found")
+                raise BrowserNotFound(browser_id)
+            with logfire.span("[XRAY] daytona signed preview url", browser_id=browser_id):
+                signed = await sandbox.create_signed_preview_url(
+                    CDP_PORT, expires_in_seconds=SIGNED_URL_TTL_SECONDS
+                )
+            span.set_attribute("outcome", "ok")
+            return signed.url
 
     def cdp_websocket_base(self) -> None:
         # CDP is reached per-sandbox over a signed HTTPS preview URL via get_cdp_base_url +

@@ -1,8 +1,11 @@
 import asyncio
 import html
 import json
+import time
 from typing import Any
+from urllib.parse import urlsplit
 
+import logfire
 import websockets
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -64,11 +67,56 @@ async def get_page_list(browser_id: str) -> list[str]:
 
 
 async def find_browser_id(page_id: str) -> str | None:
-    for browser_id in await backend.list_browser_ids():
-        page_ids = await get_page_list(browser_id)
+    # A failing probe must not hide later entries. The pool lists sandboxes Daytona has stopped
+    # (their signed preview URL answers HTTP 400) and ones it has deleted (BrowserNotFound), so a
+    # dead entry sorting ahead of the live browser would otherwise end the scan and leave the
+    # /dpage request with no response at all. Skip the dead entry and keep scanning; returning None
+    # after a full pass lets the caller close the socket with a reason instead of hanging.
+    # `open_browser_cdp_client` connects outside `get_page_list`'s try, so a rejected upgrade
+    # (Browserbase answers HTTP 410 for an ended session) also surfaces here.
+    # Prefer the running-only listing where the backend offers one: a stopped/archived sandbox
+    # cannot host a findable page, so including it only buys a round-trip and an error.
+    list_live = getattr(backend, "list_live_browser_ids", None)
+    if list_live is not None:
+        browser_ids = await list_live()
+        scope = "live"
+    else:
+        browser_ids = await backend.list_browser_ids()
+        scope = "cached"
+    logger.info(f"[FIND] page_id={page_id} scanning {len(browser_ids)} {scope} browser(s)")
+    skipped = 0
+    for position, browser_id in enumerate(browser_ids, start=1):
+        try:
+            page_ids = await get_page_list(browser_id)
+        except Exception as e:
+            skipped += 1
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            logger.warning(
+                f"[FIND] probe {position}/{len(browser_ids)} browser_id={browser_id} raised "
+                f"{type(e).__name__}"
+                + (f" HTTP {status}" if status is not None else "")
+                + f" — skipped, scan continues ({skipped} dead so far)"
+            )
+            log_state = getattr(backend, "log_session_state", None)
+            if log_state is not None:
+                await log_state(browser_id, "find_browser_id probe failed")
+            continue
+        logger.info(
+            f"[FIND] probe {position}/{len(browser_ids)} browser_id={browser_id} "
+            f"-> {len(page_ids)} page(s){' MATCH' if page_id in page_ids else ''}"
+        )
         if page_id in page_ids:
+            if skipped:
+                logger.info(
+                    f"[FIND] page_id={page_id} MATCH at probe {position} after skipping "
+                    f"{skipped} dead browser(s)"
+                )
             return browser_id
 
+    logger.info(
+        f"[FIND] page_id={page_id} not found in any of {len(browser_ids)} cached browser(s), "
+        f"{skipped} skipped as dead"
+    )
     return None
 
 
@@ -132,6 +180,7 @@ async def websocket_proxy(
     # `patch` rewrites target ids to namespace them by browser_id (local backends multiplex many
     # browsers behind one proxy). The external fleet already does this on its own /cdp proxy, so
     # when relaying to it we pass `patch=False` to avoid double-prefixing target ids.
+    handshake_started = time.monotonic()
     try:
         async with websockets.connect(
             remote_url,
@@ -140,7 +189,16 @@ async def websocket_proxy(
             close_timeout=7200,
             max_size=10 * 1024 * 1024,
         ) as remote_ws:
-            logger.info("[CDP] Connected to remote WebSocket")
+            # Timed inline rather than with a span: the connect happens on __aenter__ of the
+            # `async with`, and restructuring that to isolate it risks leaking the socket.
+            handshake_ms = (time.monotonic() - handshake_started) * 1000
+            logfire.info(
+                "[XRAY] cdp remote ws handshake",
+                browser_id=browser_id,
+                remote_host=urlsplit(remote_url).hostname,
+                handshake_ms=round(handshake_ms),
+            )
+            logger.info(f"[CDP] Connected to remote WebSocket in {handshake_ms:.0f}ms")
 
             async def client_to_remote() -> None:
                 try:
@@ -307,24 +365,33 @@ async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: boo
     # whether it came from a connectUrl, an external /cdp relay, or a /json/version probe. Both
     # `None` (not yet resolvable) and exceptions (transient /json/version failure on a boot race)
     # count as a missed attempt; the first non-None result wins.
+    # Each attempt can cost the probe's own 10s timeout plus a 3s sleep, so 10 attempts is ~130s
+    # of wall clock that the caller sees as one slow request. `attempts` is the metric that
+    # separates "one slow hop" from "many retried hops".
     remote_url: str | None = None
-    for attempt in range(10):
-        try:
-            remote_url = await backend.get_cdp_websocket_remote_url(browser_id)
-        except Exception as e:
-            logger.warning(
-                f"[CDP] Attempt {attempt + 1}/10 failed to get debugger URL from {browser_id}: {e}"
-            )
-        if remote_url is not None:
-            logger.info(f"[CDP] Got remote URL: {remote_url}")
-            break
-        if attempt < 9:
-            logger.debug("[CDP] Retrying in 3 seconds...")
-            await asyncio.sleep(3)
-    else:
-        logger.error("[CDP] All retry attempts exhausted")
-        await client_ws.close(code=4502, reason="Failed to get debugger URL")
-        return
+    with logfire.span("[XRAY] cdp resolve browser url", browser_id=browser_id) as resolve_span:
+        for attempt in range(10):
+            try:
+                remote_url = await backend.get_cdp_websocket_remote_url(browser_id)
+            except Exception as e:
+                logger.warning(
+                    f"[XRAY] cdp resolve browser attempt {attempt + 1}/10 failed for "
+                    f"{browser_id}: {type(e).__name__}: {e}"
+                )
+            if remote_url is not None:
+                resolve_span.set_attribute("attempts", attempt + 1)
+                resolve_span.set_attribute("outcome", "resolved")
+                logger.info(f"[XRAY] cdp resolved browser url after {attempt + 1} attempt(s)")
+                break
+            if attempt < 9:
+                logger.debug("[CDP] Retrying in 3 seconds...")
+                await asyncio.sleep(3)
+        else:
+            resolve_span.set_attribute("attempts", 10)
+            resolve_span.set_attribute("outcome", "exhausted")
+            logger.error("[XRAY] cdp resolve browser url exhausted all 10 attempts")
+            await client_ws.close(code=4502, reason="Failed to get debugger URL")
+            return
 
     # (3) Relay.
     logger.info(f"[CDP] Client connected, proxying to {remote_url}")
@@ -400,28 +467,37 @@ async def cdp_devtools_websocket_proxy(client_ws: WebSocket, path: str) -> None:
     # drive a single page off a multiplexed socket). Both `None` (not yet resolvable) and
     # exceptions (a transient /json/list failure on a boot race) count as a missed attempt; the
     # first non-None result wins.
+    # As with the browser-level loop: up to ~130s of wall clock hidden inside one request.
     remote_url: str | None = None
-    for attempt in range(10):
-        try:
-            remote_url = await backend.get_devtools_websocket_remote_url(
-                client_ws, browser_id, page_id
-            )
-        except Exception as e:
-            logger.warning(
-                f"[CDP] Attempt {attempt + 1}/10 failed to get page URL for "
-                f"{browser_id}/{page_id}: {e}"
-            )
-        if remote_url is not None:
-            if remote_url != "":
-                logger.info(f"[CDP] Got page remote URL: {remote_url}")
-            break
-        if attempt < 9:
-            logger.debug("[CDP] Retrying in 3 seconds...")
-            await asyncio.sleep(3)
-    else:
-        logger.error(f"[CDP] Could not get websocket URL for page {page_id}")
-        await client_ws.close(code=4502, reason="Failed to get page websocket URL")
-        return
+    with logfire.span(
+        "[XRAY] cdp resolve page url", browser_id=browser_id, page_id=page_id
+    ) as resolve_span:
+        for attempt in range(10):
+            try:
+                remote_url = await backend.get_devtools_websocket_remote_url(
+                    client_ws, browser_id, page_id
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[XRAY] cdp resolve page attempt {attempt + 1}/10 failed for "
+                    f"{browser_id}/{page_id}: {type(e).__name__}: {e}"
+                )
+            if remote_url is not None:
+                resolve_span.set_attribute("attempts", attempt + 1)
+                resolve_span.set_attribute("outcome", "resolved")
+                logger.info(f"[XRAY] cdp resolved page url after {attempt + 1} attempt(s)")
+                if remote_url != "":
+                    logger.info(f"[CDP] Got page remote URL: {remote_url}")
+                break
+            if attempt < 9:
+                logger.debug("[CDP] Retrying in 3 seconds...")
+                await asyncio.sleep(3)
+        else:
+            resolve_span.set_attribute("attempts", 10)
+            resolve_span.set_attribute("outcome", "exhausted")
+            logger.error(f"[XRAY] cdp resolve page url exhausted all 10 attempts for {page_id}")
+            await client_ws.close(code=4502, reason="Failed to get page websocket URL")
+            return
 
     # Sentinel: the backend already relayed the client socket itself (Browserbase).
     if remote_url == "":
