@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
 
-import asyncio_atexit
 import logfire
 import sentry_sdk
 import websockets
@@ -117,10 +116,10 @@ async def _create_browser_from_cdp_websocket(
             "cdp websocket connect {browser_id}",
             browser_id=browser_id,
             cdp_url=websocket_url,
-            # zendriver keeps every Browser in a process-global set (`util.__registered__instances__`)
-            # and nothing here removes it, so this only ever grows. Sampled on connect because it is
-            # the direct measure of retained browser graphs — if RSS tracks this, the leak is the
-            # registry, not an unclosed socket.
+            # Regression guard for the retention leak: this counts zendriver's process-global
+            # `util.__registered__instances__`, which nothing prunes. We no longer add to it, so a
+            # healthy sidecar reports a flat 0 — any upward drift means something started taking
+            # process-lifetime ownership of browsers again. O(1) len(), safe at 432 calls/hour.
             registered_instances=len(util.get_registered_instances()),
         ),
         _inject_headers_into_websockets(extra_headers=extra_headers),
@@ -171,15 +170,19 @@ async def _create_browser_from_cdp_websocket(
                 f"{settings.CHROMEFLEET_CDP_HANDSHAKE_TIMEOUT_SECONDS:g}s: "
                 f"browser_id={browser_id}"
             )
-    util.get_registered_instances().add(instance)
-
-    async def browser_atexit() -> None:
-        if not instance.stopped:
-            await instance.stop()
-        await instance._cleanup_temporary_profile()  # type: ignore[reportPrivateUsage]
-
-    asyncio_atexit.register(browser_atexit)  # type: ignore[reportUnknownMemberType]
-
+    # Deliberately NOT registered in `util.get_registered_instances()` and NOT given an
+    # asyncio_atexit hook. Both are process-lifetime strong references, and callers here
+    # abandon the instance when their request ends, so both retained every browser forever:
+    # `get_remote_browser` builds a fresh instance per MCP tool call (~36 per browser), which
+    # measured 0.34 MiB retained per connect / ~145 MiB/h. See docs/cdp-browser-retention.md.
+    #
+    # Neither is load-bearing for a *remote* attachment. Nothing in zendriver iterates the
+    # registry — it is written at util.py:24 and only read back by the accessor. And the
+    # atexit hook's work does not apply: `stop()` sends `Browser.close()`, which would tear
+    # down a fleet-owned browser this process does not own (36 times over, once per retained
+    # instance), and `_cleanup_temporary_profile()` targets a local profile dir that a remote
+    # attachment never created. Fleet browsers are reaped by the fleet's own idle teardown,
+    # and explicit teardown remains `terminate_remote_browser`.
     instance.id = browser_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     instance.connected_at = time.monotonic()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     return instance
