@@ -290,12 +290,6 @@ async def get_error(distilled: str) -> str | None:
     return None
 
 
-# Re-parsing the 470 pattern files costs ~0.22s of blocking CPU per call, 86% of it
-# BeautifulSoup tree-building, and every MCP tool call redid it. On a CPU-throttled
-# host the same work stretches to seconds of wall time, which is how it first showed
-# up. Sharing one parse is safe: distill() deepcopies each tree before mutating it
-# and nothing mutates the returned list.
-# Trade-off: pattern files are read once per process, so edits need a restart.
 @lru_cache(maxsize=8)
 def load_distillation_patterns(path: str) -> list[Pattern]:
     patterns: list[Pattern] = []
