@@ -11,6 +11,7 @@ from loguru import logger
 
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
+    BROWSER_SCOPE,
     BrowserNotFound,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
@@ -383,7 +384,7 @@ class PodmanBackend:
     async def browser_exists(self, browser_id: str) -> bool:
         return await container_exists(f"{BROWSER_NAME_PREFIX}{browser_id}")
 
-    async def list_browser_ids(self) -> list[str]:
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         containers = await list_containers()
         return [
             c[len(BROWSER_NAME_PREFIX) :] for c in containers if c.startswith(BROWSER_NAME_PREFIX)

@@ -10,12 +10,14 @@ from daytona import (
     DaytonaConflictError,
     DaytonaNotFoundError,
     ListSandboxesQuery,
+    SandboxState,
 )
 from fastapi import WebSocket
 from loguru import logger
 
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
+    BROWSER_SCOPE,
     BrowserNotFound,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
@@ -219,9 +221,25 @@ class DaytonaBackend:
     async def browser_exists(self, browser_id: str) -> bool:
         return await self._get(_sandbox_name(browser_id)) is not None
 
-    async def list_browser_ids(self) -> list[str]:
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
+        """Sandboxes carrying our fleet label; `"live"` keeps only the running ones.
+
+        Stopped and archived sandboxes stay in the default listing because `_ensure`
+        resumes them on demand, so they are still usable browsers. They cannot serve CDP
+        as they are, though — a stopped sandbox's signed preview URL answers HTTP 400 — so
+        callers hunting for a live page must pass `"live"`. Archived sandboxes accumulate
+        (`auto_delete_interval` counts *continuously stopped* time, and archiving ends that
+        state) and were observed reaching 50 of 87 entries, so the distinction matters.
+
+        The state filter is applied server-side, so the unusable majority is never fetched.
+        STARTING is excluded along with STOPPED/ARCHIVED: its CDP endpoint is not up yet.
+        """
+        query = ListSandboxesQuery(
+            labels={LABEL_FLEET: "1"},
+            states=[SandboxState.STARTED] if scope == "live" else None,
+        )
         browser_ids: list[str] = []
-        async for sandbox in self.client.list(ListSandboxesQuery(labels={LABEL_FLEET: "1"})):
+        async for sandbox in self.client.list(query):
             # A just-deleted sandbox lingers briefly as `DESTROYED_<name>_<ts>`; only our names count.
             if sandbox.name and sandbox.name.startswith(BROWSER_NAME_PREFIX):
                 browser_ids.append(_browser_id_from_name(sandbox.name))

@@ -5,7 +5,7 @@ from fastapi import WebSocket
 from fastmcp.server.dependencies import get_http_headers
 from httpx_retries import Retry, RetryTransport
 
-from getgather.browsers.backend import BrowserNotFound
+from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
 from getgather.client_ip import client_ip_var
 from getgather.config import settings
 
@@ -138,7 +138,7 @@ class FleetBackend:
         )
         return response is not None and response.status_code == 200
 
-    async def list_browser_ids(self) -> list[str]:
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         response = _require(await call_chromefleet_api("GET"))
         data: Any = response.json()
         if not isinstance(data, list):

@@ -64,7 +64,11 @@ async def get_page_list(browser_id: str) -> list[str]:
 
 
 async def find_browser_id(page_id: str) -> str | None:
-    for browser_id in await backend.list_browser_ids():
+    # Live-only: a stopped or archived browser cannot host the page, so probing it would only
+    # buy a round-trip and an error.
+    browser_ids = await backend.list_browser_ids("live")
+    logger.debug(f"[CDP] scanning {len(browser_ids)} browser(s) for page_id={page_id}")
+    for browser_id in browser_ids:
         page_ids = await get_page_list(browser_id)
         if page_id in page_ids:
             return browser_id
