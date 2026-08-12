@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import httpx
 from fastapi import WebSocket
@@ -11,6 +11,10 @@ from getgather.config import FRIENDLY_CHARS, settings
 # Shared name prefix: a browser with id `abc` is a podman container / Daytona sandbox named
 # `chromium-abc`. Both local backends derive names and parse ids from this single prefix.
 BROWSER_NAME_PREFIX = "chromium-"
+
+# Which browsers a listing should include. `all` is the full inventory, including ones a
+# backend can resume on demand; `live` is only those able to serve CDP right now.
+BROWSER_SCOPE = Literal["all", "live"]
 
 
 def rewrite_ws_url(ws_url: str, cdp_base_url: str) -> str:
@@ -216,7 +220,15 @@ class Backend(Protocol):
 
     async def delete_browser(self, browser_id: str) -> dict[str, Any]: ...
 
-    async def list_browser_ids(self) -> list[str]: ...
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
+        """Every browser this backend knows about.
+
+        Pass `"live"` when you intend to reach one (page lookup, CDP relay) rather than
+        report inventory. Backends whose listing already holds only reachable browsers
+        return the same ids either way; the distinction matters for Daytona, which keeps
+        stopped and archived sandboxes in its listing.
+        """
+        ...
 
     async def browser_exists(self, browser_id: str) -> bool: ...
 

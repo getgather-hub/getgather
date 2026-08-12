@@ -10,7 +10,7 @@ from fastapi.websockets import WebSocketState
 from loguru import logger
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from getgather.browsers.backend import BrowserNotFound
+from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
 from getgather.browsers.residential_proxy import get_proxy_config
 from getgather.config import settings
 
@@ -373,7 +373,7 @@ class BrowserbaseBackend:
     async def browser_exists(self, browser_id: str) -> bool:
         return browser_id in self._sessions
 
-    async def list_browser_ids(self) -> list[str]:
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         return list(self._sessions.keys())
 
     async def cleanup_idle(self) -> list[str]:
