@@ -140,7 +140,74 @@ Derived: 145.4 MiB/h ÷ 432 connects/h = **0.337 MiB retained per connect**, mat
 
 ## AFTER — fix A
 
-<!-- filled in after the fix has run ≥90 min under the same 5-minute test cadence -->
+Same machine, same test suite, same 5-minute cadence. Deployed 2026-08-12 22:51 UTC,
+healthy 22:53. Measurement window 22:53–23:33 UTC.
+
+| sample (UTC) | RSS MiB | utime | stime | threads |
+| --- | --- | --- | --- | --- |
+| 22:53:47 | 142.3 | 656 | 102 | 9 |
+| 22:58:55 | 175.6 | 2728 | 164 | 10 |
+| 23:04:04 | 174.2 | 4547 | 218 | 10 |
+| 23:09:13 | 176.6 | 6920 | 284 | 10 |
+| 23:14:24 | 177.2 | 9053 | 342 | 10 |
+| 23:22:50 | 177.2 | 12719 | 432 | 10 |
+| 23:27:59 | 179.4 | 14897 | 490 | 10 |
+| 23:33:11 | 179.9 | 17202 | 555 | 10 |
+
+**Growth: 175.6 → 179.9 MiB over a measured 34.3 min = 7.5 MiB/h**, against a control
+window of comparable length (27.6 min). Warmup excluded on both arms by the same rule.
+
+Zero probe failures, so the after arm is denser than the control (8 good samples vs 5).
+
+Span rates, 5-minute buckets:
+
+| bucket (UTC) | connects | closes | hdrs | browsers | reg_max |
+| --- | --- | --- | --- | --- | --- |
+| 22:55 | 36 | 0 | 72 | 1 | 0 |
+| 23:00 | 36 | 0 | 74 | 1 | 0 |
+| 23:05 | 36 | 0 | 74 | 1 | 0 |
+| 23:10 | 36 | 0 | 74 | 1 | 0 |
+| 23:15 | 36 | 0 | 74 | 1 | 0 |
+| 23:20 | 36 | 0 | 74 | 1 | 0 |
+| 23:25 | 36 | 0 | 74 | 1 | 0 |
+| 23:30 | 36 | 0 | 74 | 1 | 0 |
+| 23:35 | 34 | 0 | 69 | 1 | 0 |
+
+`registered_instances` is **0 in every bucket** — not slowed, never taken. The last
+pre-restart bucket on the old build caught it at 315 and still incrementing.
+
+`closes` remaining 0 is expected, not a gap: fix A adds no teardown call site. Instances are
+now simply unreachable when the request drops them and are collected. Pairing connects to
+closes 1:1 only becomes meaningful under fix B, when a cached browser has a real lifetime.
+
+### Result
+
+| metric | control | fix A | change |
+| --- | --- | --- | --- |
+| **RSS growth** | **145.4 MiB/h** | **7.5 MiB/h** | **19× lower** |
+| registered_instances | 0→35/bucket, monotonic | flat 0 | leak closed |
+| cdp websocket connect | 36/bucket | 36/bucket | unchanged |
+| CDP websocket headers attached | 74/bucket | 74/bucket | unchanged |
+| browsers started | 1/bucket | 1/bucket | unchanged |
+| threads | 10 | 10 | unchanged |
+| sidecar CPU | 6.8% of one core | 7.2% | unchanged |
+
+The load columns are identical across arms, so the RSS difference is attributable to the
+fix and not to a lighter test cycle. Extrapolated to the original 6.7-hour observation:
+~975 MiB of growth becomes ~50 MiB.
+
+### Residual
+
+7.5 MiB/h is not zero, and the per-sample slope oscillated (5.8, 6.2, 4.0, 7.8, 7.5)
+rather than converging on zero, so the remainder looks like a real constant-rate effect
+rather than noise. ~7.5 MiB/h is ~180 MiB/day: no longer an operational threat on a 2 GB
+machine, but not nothing.
+
+The likely cause is allocator churn — fix A stops browsers being *retained*, but
+`get_remote_browser` still constructs 36 `zd.Browser` + `Connection` + handler sets per
+cycle, and glibc does not reliably return freed arenas to the OS. Fix B removes that churn
+at the source and is the natural candidate for the remainder. This is unconfirmed: the
+registry gauge cannot see it, and attributing it needs a different instrument.
 
 ## Scope
 
