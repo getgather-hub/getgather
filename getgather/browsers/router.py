@@ -58,7 +58,6 @@ async def get_page_list(browser_id: str) -> list[str]:
         # for an ended session). In every case the browser has no reachable pages.
         logger.info(f"[CDP] browser {browser_id} unreachable: {type(e).__name__}")
         return []
-    client = await open_browser_cdp_client(browser_id)
     if client is None:
         return []
     try:
