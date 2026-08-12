@@ -137,7 +137,7 @@ async def websocket_proxy(
             remote_url,
             ping_interval=60,
             ping_timeout=30,
-            close_timeout=7200,
+            close_timeout=10,
             max_size=10 * 1024 * 1024,
         ) as remote_ws:
             logger.info("[CDP] Connected to remote WebSocket")
@@ -193,6 +193,9 @@ async def websocket_proxy(
         logger.error(f"[CDP] Unexpected error: {type(e).__name__}: {e}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4500, reason="Internal proxy error")
+    finally:
+        if client_ws.client_state == WebSocketState.CONNECTED:
+            await client_ws.close()
 
 
 @router.post("/api/v1/browsers")
