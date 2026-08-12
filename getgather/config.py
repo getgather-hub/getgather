@@ -23,6 +23,15 @@ class Settings(BrowserSettings, BaseSettings):
     SENTRY_DSN: str = ""
     LOGFIRE_TOKEN: str = ""
 
+    # Memory leak instrumentation (getgather/memory_xray.py). Off by default:
+    # the census and tracemalloc tiers cost real CPU, so they are opted into
+    # per-deployment rather than carried by every install.
+    MEMORY_XRAY: bool = False
+    MEMORY_XRAY_INTERVAL: int = 60
+    MEMORY_XRAY_TOP_N: int = 10
+    MEMORY_XRAY_CENSUS: bool = False
+    MEMORY_XRAY_TRACEMALLOC: bool = False
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.DATA_DIR).resolve() if self.DATA_DIR else PROJECT_DIR / "data"

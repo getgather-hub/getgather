@@ -5,6 +5,7 @@ import urllib.parse
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from glob import glob
 from pathlib import Path
 from typing import Any, Callable, Coroutine, cast
@@ -289,6 +290,11 @@ async def get_error(distilled: str) -> str | None:
     return None
 
 
+# Parsing the ~470 pattern files costs ~3.5s of blocking CPU on the event loop, and
+# every MCP tool call used to redo it. Sharing one parse is safe because the only
+# consumer (run_distillation_loop) deepcopies each tree before mutating it.
+# Trade-off: pattern files are read once per process, so edits need a restart.
+@lru_cache(maxsize=8)
 def load_distillation_patterns(path: str) -> list[Pattern]:
     patterns: list[Pattern] = []
     for name in glob(path, recursive=True):

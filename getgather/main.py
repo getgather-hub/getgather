@@ -19,6 +19,7 @@ from getgather.browser import create_remote_browser, terminate_remote_browser
 from getgather.browsers.router import backend, router as browsers_router
 from getgather.config import PROJECT_DIR, settings
 from getgather.logs import MCPLoggingContextMiddleware
+from getgather.memory_xray import memory_xray_loop
 from getgather.mcp.dpage import router as dpage_router
 from getgather.mcp.main import MCPDoc, create_mcp_apps, mcp_app_docs
 from getgather.pages_api_router import router as pages_router
@@ -56,6 +57,11 @@ async def lifespan(app: FastAPI):
 
     background_task = asyncio.create_task(timer_loop())
 
+    tasks = [background_task]
+    if settings.MEMORY_XRAY:
+        logger.info("[XRAY] memory sampler enabled")
+        tasks.append(asyncio.create_task(memory_xray_loop(stop_event)))
+
     try:
         async with AsyncExitStack() as stack:
             for mcp_app in mcp_apps:
@@ -63,7 +69,7 @@ async def lifespan(app: FastAPI):
             yield
 
             stop_event.set()
-            await background_task
+            await asyncio.gather(*tasks)
     finally:
         await backend.shutdown()
 
