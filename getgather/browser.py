@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -116,6 +117,11 @@ async def _create_browser_from_cdp_websocket(
             "cdp websocket connect {browser_id}",
             browser_id=browser_id,
             cdp_url=websocket_url,
+            # zendriver keeps every Browser in a process-global set (`util.__registered__instances__`)
+            # and nothing here removes it, so this only ever grows. Sampled on connect because it is
+            # the direct measure of retained browser graphs — if RSS tracks this, the leak is the
+            # registry, not an unclosed socket.
+            registered_instances=len(util.get_registered_instances()),
         ),
         _inject_headers_into_websockets(extra_headers=extra_headers),
     ):
@@ -175,6 +181,7 @@ async def _create_browser_from_cdp_websocket(
     asyncio_atexit.register(browser_atexit)  # type: ignore[reportUnknownMemberType]
 
     instance.id = browser_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    instance.connected_at = time.monotonic()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     return instance
 
 
@@ -256,8 +263,28 @@ async def terminate_remote_browser(browser: zd.Browser) -> None:
     """Terminate an existing remote Chrome via ChromeFleet."""
     browser_id = cast(str, browser.id)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     logger.info(f"Terminating ChromeFleet browser: {browser_id}")
-    # no need to raise for error (which would fail the whole process)
-    await call_chromefleet_api("DELETE", browser_id, timeout=1.0, retries=0, raise_for_status=False)
+    connected_at = getattr(browser, "connected_at", None)
+    try:
+        # no need to raise for error (which would fail the whole process)
+        await call_chromefleet_api(
+            "DELETE", browser_id, timeout=1.0, retries=0, raise_for_status=False
+        )
+    finally:
+        # Pairs 1:1 with the `cdp websocket connect` span. `registered_instances` is read *after*
+        # teardown on purpose: the browser is gone from the fleet by now, so a count that does not
+        # drop is the retained-object leak showing itself.
+        logfire.info(
+            "cdp websocket close {browser_id}",
+            browser_id=browser_id,
+            outcome="terminated",
+            lifetime_ms=(
+                round((time.monotonic() - connected_at) * 1000)
+                if connected_at is not None
+                else None
+            ),
+            registered_instances=len(util.get_registered_instances()),
+            relay="remote_browser",
+        )
 
 
 _CREDENTIALS_BLOCK_SCRIPT = r"""

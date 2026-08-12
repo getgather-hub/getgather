@@ -173,6 +173,7 @@ async def websocket_proxy(
     # browsers behind one proxy). The external fleet already does this on its own /cdp proxy, so
     # when relaying to it we pass `patch=False` to avoid double-prefixing target ids.
     handshake_started = time.monotonic()
+    outcome = "closed"
     try:
         async with websockets.connect(
             remote_url,
@@ -235,17 +236,33 @@ async def websocket_proxy(
                 except (asyncio.CancelledError, Exception):
                     pass
 
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
     except OSError as e:
+        outcome = "remote_unreachable"
         logger.error(f"[CDP] Could not connect to remote: {e}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4502, reason="Remote server unreachable")
     except Exception as e:
+        outcome = "error"
         logger.error(f"[CDP] Unexpected error: {type(e).__name__}: {e}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4500, reason="Internal proxy error")
     finally:
-        if client_ws.client_state == WebSocketState.CONNECTED:
-            await client_ws.close()
+        # Logged from an inner `finally` so the teardown record survives a close() that raises
+        # (or a cancellation landing mid-close). A close log that only fires on the happy path
+        # reads as a connection leak that isn't there.
+        try:
+            if client_ws.client_state == WebSocketState.CONNECTED:
+                await client_ws.close()
+        finally:
+            logfire.info(
+                "cdp websocket close {browser_id}",
+                browser_id=browser_id,
+                outcome=outcome,
+                lifetime_ms=round((time.monotonic() - handshake_started) * 1000),
+            )
 
 
 @router.post("/api/v1/browsers")

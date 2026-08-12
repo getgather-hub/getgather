@@ -1,9 +1,11 @@
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 import httpx
+import logfire
 import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -51,6 +53,8 @@ async def websocket_proxy_attached(
         "params": {"targetId": target_id, "flatten": True},
     })
 
+    started = time.monotonic()
+    outcome = "closed"
     try:
         async with websockets.connect(
             remote_url,
@@ -79,6 +83,7 @@ async def websocket_proxy_attached(
                     continue
                 if "error" in data:
                     err: Any = data.get("error")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                    outcome = "attach_failed"
                     logger.error(f"[CDP] attachToTarget failed for {target_id}: {err}")
                     if client_ws.client_state == WebSocketState.CONNECTED:
                         await client_ws.close(code=4502, reason=f"attachToTarget failed: {err}")
@@ -150,15 +155,36 @@ async def websocket_proxy_attached(
                 except (asyncio.CancelledError, Exception):
                     pass
             return
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
     except OSError as e:
+        outcome = "remote_unreachable"
         logger.warning(f"[CDP] Attach to {target_id} failed (OSError): {e}")
     except InvalidStatus as e:
+        outcome = "rejected"
         logger.warning(f"[CDP] Attach to {target_id} rejected with HTTP {e.response.status_code}")
     except Exception as e:
+        outcome = "error"
         logger.warning(f"[CDP] Attach to {target_id} failed ({type(e).__name__}): {e}")
-
-    if client_ws.client_state == WebSocketState.CONNECTED:
-        await client_ws.close(code=4502, reason="Remote server unreachable")
+    finally:
+        # Only the caught-exception outcomes reach the 4502 close; the success and attach_failed
+        # paths returned out of the `try` and must keep skipping it, as they did before.
+        try:
+            if (
+                outcome not in ("closed", "attach_failed", "cancelled")
+                and client_ws.client_state == WebSocketState.CONNECTED
+            ):
+                await client_ws.close(code=4502, reason="Remote server unreachable")
+        finally:
+            logfire.info(
+                "cdp websocket close {browser_id}",
+                browser_id=target_id,
+                page_id=target_id,
+                outcome=outcome,
+                lifetime_ms=round((time.monotonic() - started) * 1000),
+                relay="browserbase_attached",
+            )
 
 
 def _api_key() -> str:
