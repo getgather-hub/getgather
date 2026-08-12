@@ -113,17 +113,26 @@ async def test_get_browser_never_reconfigures_proxy(monkeypatch: MonkeyPatch) ->
 async def test_create_browser_propagates_proxy_verification_error(monkeypatch: MonkeyPatch) -> None:
     # create_browser must let ProxyVerificationError propagate (the endpoint maps it to 500) so the
     # client can retry rather than get an unproxied browser; best-of-N relies on this to fail a loser.
+    # It must also kill the now-unusable container rather than leaking it.
     async def fake_launch(image: str, name: str) -> str:
         return "container-id"
 
     async def fake_configure(*args: Any, **kwargs: Any) -> str | None:
         raise ProxyVerificationError("IP unchanged after proxy")
 
+    killed: list[str] = []
+
+    async def fake_kill(container_name: str) -> None:
+        killed.append(container_name)
+
     monkeypatch.setattr(podman_browsers, "launch_container", fake_launch)
     monkeypatch.setattr(podman_browsers, "configure_remote_browser", fake_configure)
+    monkeypatch.setattr(podman_browsers, "kill_container", fake_kill)
 
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
         await PodmanBackend().create_browser("b0", "1.2.3.4", "amazon.com", None)
+
+    assert killed == ["chromium-b0"]
 
 
 @pytest.mark.asyncio

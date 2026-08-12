@@ -18,6 +18,7 @@ from loguru import logger
 
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
+    BROWSER_SCOPE,
     BrowserNotFound,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
@@ -191,7 +192,14 @@ class DaytonaBackend:
             sandbox = await self._ensure(browser_id, browser_type)
             # Proxy is mandatory when configured: let ProxyVerificationError propagate (the endpoint
             # maps it to 500) so the client can retry rather than get an unproxied browser.
-            await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
+            try:
+                await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
+            except ProxyVerificationError:
+                # A sandbox that fails proxy verification is unusable (wrong/no egress IP) and
+                # would otherwise sit around until Daytona's auto_stop/auto_delete TTL. Delete now.
+                logger.warning(f"Deleting sandbox {sandbox.name} after proxy verification failure")
+                await sandbox.delete()
+                raise
             return await self._get_info(sandbox)
 
     async def get_browser(
@@ -214,28 +222,27 @@ class DaytonaBackend:
     async def browser_exists(self, browser_id: str) -> bool:
         return await self._get(_sandbox_name(browser_id)) is not None
 
-    async def list_browser_ids(self) -> list[str]:
-        return await self._list_browser_ids(live_only=False)
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
+        """Sandboxes carrying our fleet label; `"live"` keeps only the running ones.
 
-    async def list_live_browser_ids(self) -> list[str]:
-        """Only sandboxes that are actually running, for callers that intend to reach CDP.
+        Stopped and archived sandboxes stay in the default listing because `_ensure`
+        resumes them on demand, so they are still usable browsers. They cannot serve CDP
+        as they are, though — a stopped sandbox's signed preview URL answers HTTP 400 — so
+        callers hunting for a live page must pass `"live"`. Archived sandboxes accumulate
+        (`auto_delete_interval` counts *continuously stopped* time, and archiving ends that
+        state) and were observed reaching 50 of 87 entries, so the distinction matters.
 
-        A STOPPED or ARCHIVED sandbox has no reachable browser — its signed preview URL answers
-        HTTP 400 — so probing one costs a round-trip and an error. Archived entries are never
-        reaped (Daytona's `auto_delete_interval` counts *continuously stopped* time, and archiving
-        ends that state), so they dominate the raw list: 87 entries observed, of which 50 were
-        ARCHIVED and the oldest a week old. Kept separate from `list_browser_ids` so the
-        `GET /api/v1/browsers` listing keeps reporting every sandbox.
+        The state filter is applied server-side, so the unusable majority is never fetched.
+        STARTING is excluded along with STOPPED/ARCHIVED: its CDP endpoint is not up yet.
         """
-        return await self._list_browser_ids(live_only=True)
-
-    async def _list_browser_ids(self, *, live_only: bool) -> list[str]:
+        query = ListSandboxesQuery(
+            labels={LABEL_FLEET: "1"},
+            states=[SandboxState.STARTED] if scope == "live" else None,
+        )
         browser_ids: list[str] = []
-        async for sandbox in self.client.list(ListSandboxesQuery(labels={LABEL_FLEET: "1"})):
+        async for sandbox in self.client.list(query):
             # A just-deleted sandbox lingers briefly as `DESTROYED_<name>_<ts>`; only our names count.
             if not sandbox.name or not sandbox.name.startswith(BROWSER_NAME_PREFIX):
-                continue
-            if live_only and sandbox.state != SandboxState.STARTED:
                 continue
             browser_ids.append(_browser_id_from_name(sandbox.name))
         return browser_ids

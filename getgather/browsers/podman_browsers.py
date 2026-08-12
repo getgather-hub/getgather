@@ -11,6 +11,7 @@ from loguru import logger
 
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
+    BROWSER_SCOPE,
     BrowserNotFound,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
@@ -349,7 +350,16 @@ class PodmanBackend:
     ) -> dict[str, Any]:
         container_name = f"{BROWSER_NAME_PREFIX}{browser_id}"
         await launch_container(settings.CONTAINER_IMAGE, container_name)
-        ip = await configure_remote_browser(browser_id, container_name, origin_ip, target_domain)
+        try:
+            ip = await configure_remote_browser(
+                browser_id, container_name, origin_ip, target_domain
+            )
+        except ProxyVerificationError:
+            # A container that fails proxy verification is unusable (wrong/no egress IP) and
+            # would otherwise sit around until manually reaped. Delete it immediately.
+            logger.warning(f"Deleting {container_name} after proxy verification failure")
+            await kill_container(container_name)
+            raise
         return {"container_name": container_name, "status": "created", "ip": ip}
 
     async def get_browser(
@@ -374,7 +384,7 @@ class PodmanBackend:
     async def browser_exists(self, browser_id: str) -> bool:
         return await container_exists(f"{BROWSER_NAME_PREFIX}{browser_id}")
 
-    async def list_browser_ids(self) -> list[str]:
+    async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         containers = await list_containers()
         return [
             c[len(BROWSER_NAME_PREFIX) :] for c in containers if c.startswith(BROWSER_NAME_PREFIX)

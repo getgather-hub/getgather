@@ -74,16 +74,8 @@ async def find_browser_id(page_id: str) -> str | None:
     # after a full pass lets the caller close the socket with a reason instead of hanging.
     # `open_browser_cdp_client` connects outside `get_page_list`'s try, so a rejected upgrade
     # (Browserbase answers HTTP 410 for an ended session) also surfaces here.
-    # Prefer the running-only listing where the backend offers one: a stopped/archived sandbox
-    # cannot host a findable page, so including it only buys a round-trip and an error.
-    list_live = getattr(backend, "list_live_browser_ids", None)
-    if list_live is not None:
-        browser_ids = await list_live()
-        scope = "live"
-    else:
-        browser_ids = await backend.list_browser_ids()
-        scope = "cached"
-    logger.info(f"[FIND] page_id={page_id} scanning {len(browser_ids)} {scope} browser(s)")
+    browser_ids = await backend.list_browser_ids("live")
+    logger.info(f"[FIND] page_id={page_id} scanning {len(browser_ids)} live browser(s)")
     skipped = 0
     for position, browser_id in enumerate(browser_ids, start=1):
         try:
@@ -114,7 +106,7 @@ async def find_browser_id(page_id: str) -> str | None:
             return browser_id
 
     logger.info(
-        f"[FIND] page_id={page_id} not found in any of {len(browser_ids)} cached browser(s), "
+        f"[FIND] page_id={page_id} not found in any of {len(browser_ids)} live browser(s), "
         f"{skipped} skipped as dead"
     )
     return None
@@ -186,7 +178,7 @@ async def websocket_proxy(
             remote_url,
             ping_interval=60,
             ping_timeout=30,
-            close_timeout=7200,
+            close_timeout=10,
             max_size=10 * 1024 * 1024,
         ) as remote_ws:
             # Timed inline rather than with a span: the connect happens on __aenter__ of the
@@ -251,6 +243,9 @@ async def websocket_proxy(
         logger.error(f"[CDP] Unexpected error: {type(e).__name__}: {e}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4500, reason="Internal proxy error")
+    finally:
+        if client_ws.client_state == WebSocketState.CONNECTED:
+            await client_ws.close()
 
 
 @router.post("/api/v1/browsers")
