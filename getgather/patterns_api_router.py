@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 from pydantic import BaseModel
 
+from getgather.zen_distill import load_distillation_patterns
+
 router = APIRouter()
 
 PATTERNS_DIR = os.path.join(os.path.dirname(__file__), "mcp", "patterns")
@@ -82,6 +84,7 @@ async def upsert_pattern(
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(body.content)
+        load_distillation_patterns.cache_clear()
         action = "updated" if exists else "created"
         logger.info(f"Pattern {pattern_name!r} {action}.")
         return {"pattern_name": pattern_name, "status": action}
@@ -100,6 +103,7 @@ async def delete_pattern(pattern_name: str, ext: str = Query("html")) -> dict[st
         raise HTTPException(status_code=404, detail=f"Pattern {pattern_name!r} not found")
     try:
         os.remove(path)
+        load_distillation_patterns.cache_clear()
         logger.info(f"Pattern {pattern_name!r} deleted.")
         return {"pattern_name": pattern_name, "status": "deleted"}
     except Exception as e:
