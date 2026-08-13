@@ -1,4 +1,3 @@
-# getgather/browsers/proxy_best_of_n.py
 from getgather.browsers.backend import ProxyVerificationError
 
 FALLBACK_PROBE_URL = "https://ip.fly.dev"

@@ -1,4 +1,3 @@
-# tests/test_proxy_best_of_n.py
 import pytest
 
 from getgather.browsers.backend import ProxyVerificationError

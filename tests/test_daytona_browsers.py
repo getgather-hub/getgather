@@ -378,7 +378,7 @@ async def test_create_omits_env_when_browser_type_none(monkeypatch: MonkeyPatch)
 
 def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: MonkeyPatch) -> None:
     # When BROWSER_BEST_OF_N is unset (None), the router falls back to the backend's own default
-    # (DaytonaBackend.default_best_of_n == 3) instead of hard-coding 1.
+    # (DaytonaBackend.default_best_of_n == 1) and short-circuits the race like explicit N=1.
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -387,19 +387,29 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
     monkeypatch.setattr(router_module.settings, "BROWSER_BEST_OF_N", None)
     monkeypatch.setattr(router_module, "backend", _backend())
 
-    invoked: dict[str, Any] = {}
+    ids = iter(["solo"])
 
-    async def fake_best_of_n(
-        backend: Any,
-        n: int,
+    def fake_new_id() -> str:
+        return next(ids)
+
+    called: dict[str, Any] = {}
+
+    async def fake_create_browser(
+        self: Any,
+        browser_id: str,
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
-    ) -> tuple[str, dict[str, str]]:
-        invoked["n"] = n
-        return "winner", {"id": "winner"}
+    ) -> dict[str, str]:
+        called["browser_id"] = browser_id
+        return {"id": browser_id}
 
-    monkeypatch.setattr(router_module, "best_of_n", fake_best_of_n)
+    async def fail_best_of_n(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        raise AssertionError("best_of_n should not run when backend default N=1")
+
+    monkeypatch.setattr(router_module, "new_browser_id", fake_new_id)
+    monkeypatch.setattr(DaytonaBackend, "create_browser", fake_create_browser)
+    monkeypatch.setattr(router_module, "best_of_n", fail_best_of_n)
 
     app = FastAPI()
     app.include_router(router_module.router)
@@ -407,14 +417,15 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
 
     response = client.post("/api/v1/browsers")
     assert response.status_code == 200
-    assert invoked["n"] == 3
+    assert response.json() == {"browser_id": "solo", "id": "solo"}
+    assert called["browser_id"] == "solo"
 
 
 @pytest.mark.parametrize(
     ("module_name", "expected"),
     [
         ("getgather.browsers.podman_browsers", 5),
-        ("getgather.browsers.daytona_browsers", 3),
+        ("getgather.browsers.daytona_browsers", 1),
         ("getgather.browsers.fleet_browsers", 1),
     ],
 )
