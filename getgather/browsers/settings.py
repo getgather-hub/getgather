@@ -65,6 +65,11 @@ class BrowserSettings(BaseSettings):
     # (see `Backend.default_best_of_n`): Podman=5, Daytona=3, Fleet=1.
     BROWSER_BEST_OF_N: int | None = None
 
+    # Daytona-only: race this many sticky proxy sessions (same provider) and keep the
+    # lowest TTFB to the target domain (or ip.fly.dev fallback). When unset, default is 3.
+    # Set to 1 to disable the race and use a single session id (= browser_id).
+    BROWSER_PROXY_BEST_OF_N: int | None = None
+
     @property
     def effective_chromefleet_url(self) -> str:
         """Returns CHROMEFLEET_URL if set, otherwise falls back to the local backend."""
