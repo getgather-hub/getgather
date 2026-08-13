@@ -52,9 +52,7 @@ def test_parse_ttfb_invalid() -> None:
 
 
 def test_pick_fastest_session_picks_lowest_ttfb() -> None:
-    winner = pick_fastest_session(
-        [("b0-p0", 0.40), ("b0-p1", 0.12), ("b0-p2", None)]
-    )
+    winner = pick_fastest_session([("b0-p0", 0.40), ("b0-p1", 0.12), ("b0-p2", None)])
     assert winner == "b0-p1"
 
 
