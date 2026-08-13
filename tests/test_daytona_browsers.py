@@ -15,6 +15,9 @@ def _backend() -> DaytonaBackend:
 
 def _patch_proxy(monkeypatch: MonkeyPatch, *, ips: list[str | None], proxy_ok: bool = True) -> None:
     """Force a configured proxy and drive _get_sandbox_public_ip's return sequence."""
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 1)
 
     class _Cfg:
         def get_proxy_url(self, browser_id: str) -> str:
@@ -66,6 +69,149 @@ async def test_configure_remote_sandbox_raises_when_ip_unchanged(monkeypatch: Mo
     _patch_proxy(monkeypatch, ips=["1.1.1.1", "1.1.1.1"])
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
         await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_picks_fastest_proxy_session(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 3)
+
+    applied: list[str] = []
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://user-sess-{session_id}:pass@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    async def fake_configure_sandbox_proxy(sandbox: Any, proxy_url: str) -> bool:
+        applied.append(proxy_url)
+        return True
+
+    ips = iter(["1.1.1.1", "9.9.9.9"])
+
+    async def fake_public_ip(*args: Any, **kwargs: Any):
+        return next(ips)
+
+    class _ExecResult:
+        def __init__(self, exit_code: int, result: str) -> None:
+            self.exit_code = exit_code
+            self.result = result
+
+    class _Process:
+        async def exec(self, cmd: str) -> _ExecResult:
+            assert "https://amazon.com/" in cmd
+            if "b0-p0" in cmd:
+                return _ExecResult(0, "0.50")
+            if "b0-p1" in cmd:
+                return _ExecResult(0, "0.10")
+            if "b0-p2" in cmd:
+                return _ExecResult(28, "")
+            return _ExecResult(1, "")
+
+    class _RaceSandbox:
+        name = "chromium-test"
+        process = _Process()
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+    monkeypatch.setattr(daytona_browsers, "_configure_sandbox_proxy", fake_configure_sandbox_proxy)
+    monkeypatch.setattr(daytona_browsers, "_get_sandbox_public_ip", fake_public_ip)
+
+    await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+        cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+        "b0",
+        "1.2.3.4",
+        "amazon.com",
+    )
+    assert applied == ["http://user-sess-b0-p1:pass@proxy.example:9999"]
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_all_proxy_probes_fail(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 2)
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://user-sess-{session_id}:pass@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    class _ExecResult:
+        exit_code = 28
+        result = ""
+
+    class _Process:
+        async def exec(self, cmd: str) -> _ExecResult:
+            return _ExecResult()
+
+    class _RaceSandbox:
+        name = "chromium-test"
+        process = _Process()
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+
+    with pytest.raises(ProxyVerificationError, match="no proxy candidate"):
+        await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+            cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+            "b0",
+            "1.2.3.4",
+            "amazon.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_n1_uses_browser_id_session(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 1)
+    applied: list[str] = []
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://sess-{session_id}@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    async def fake_configure_sandbox_proxy(sandbox: Any, proxy_url: str) -> bool:
+        applied.append(proxy_url)
+        return True
+
+    ips = iter([None, "9.9.9.9"])
+
+    async def fake_public_ip(*args: Any, **kwargs: Any):
+        return next(ips)
+
+    class _RaceSandbox:
+        name = "chromium-test"
+
+        class process:
+            @staticmethod
+            async def exec(cmd: str) -> Any:
+                raise AssertionError(f"probe should not run for N=1: {cmd}")
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+    monkeypatch.setattr(daytona_browsers, "_configure_sandbox_proxy", fake_configure_sandbox_proxy)
+    monkeypatch.setattr(daytona_browsers, "_get_sandbox_public_ip", fake_public_ip)
+
+    await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+        cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+        "b0",
+        "1.2.3.4",
+        None,
+    )
+    assert applied == ["http://sess-b0@proxy.example:9999"]
 
 
 @pytest.mark.asyncio

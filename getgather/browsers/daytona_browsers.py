@@ -1,4 +1,5 @@
 import asyncio
+import shlex
 import time
 from typing import Any
 
@@ -23,7 +24,14 @@ from getgather.browsers.backend import (
     get_browser_websocket_debugger_url,
     get_page_websocket_debugger_url,
 )
-from getgather.browsers.residential_proxy import get_proxy_config
+from getgather.browsers.proxy_best_of_n import (
+    candidate_session_ids,
+    effective_proxy_best_of_n,
+    parse_ttfb,
+    pick_fastest_session,
+    proxy_probe_url,
+)
+from getgather.browsers.residential_proxy import ProxyConfig, get_proxy_config
 from getgather.config import settings
 
 CDP_PORT = 9222
@@ -92,6 +100,49 @@ async def _configure_sandbox_proxy(sandbox: AsyncSandbox, proxy_url: str) -> boo
     return True
 
 
+async def _probe_proxy_ttfb(sandbox: AsyncSandbox, proxy_url: str, probe_url: str) -> float | None:
+    """Measure TTFB through `proxy_url` to `probe_url` without touching tinyproxy."""
+    cmd = (
+        "curl -s -o /dev/null -w '%{time_starttransfer}' "
+        f"--max-time 10 -x {shlex.quote(proxy_url)} {shlex.quote(probe_url)}"
+    )
+    try:
+        response = await sandbox.process.exec(cmd)
+    except Exception as e:
+        logger.debug(f"Proxy TTFB probe failed on {sandbox.name}: {type(e).__name__}: {e}")
+        return None
+    if response.exit_code != 0:
+        logger.debug(
+            f"Proxy TTFB probe exit={response.exit_code} on {sandbox.name}: {response.result!r}"
+        )
+        return None
+    return parse_ttfb(response.result or "")
+
+
+async def _select_proxy_session_id(
+    sandbox: AsyncSandbox,
+    proxy_config: ProxyConfig,
+    browser_id: str,
+    target_domain: str | None,
+) -> str:
+    n = effective_proxy_best_of_n(settings.BROWSER_PROXY_BEST_OF_N)
+    if n == 1:
+        return browser_id
+
+    probe_url = proxy_probe_url(target_domain)
+    sessions = candidate_session_ids(browser_id, n)
+    logger.info(f"Best-of-{n} proxy race on {sandbox.name}: sessions={sessions} probe={probe_url}")
+
+    async def _one(session_id: str) -> tuple[str, float | None]:
+        url = proxy_config.get_proxy_url(session_id)
+        return session_id, await _probe_proxy_ttfb(sandbox, url, probe_url)
+
+    results = await asyncio.gather(*[_one(s) for s in sessions])
+    winner = pick_fastest_session(list(results))
+    logger.info(f"Best-of-N proxy winner on {sandbox.name}: {winner}")
+    return winner
+
+
 async def _get_sandbox_public_ip(
     sandbox: AsyncSandbox, *, retries: int = 5, retry_delay: float = 2.0
 ) -> str | None:
@@ -122,10 +173,11 @@ async def _configure_remote_sandbox(
     this raises ProxyVerificationError. If no proxy is configured, this is a no-op (proxy is not
     required). Callers let the error propagate; best-of-N treats a raising candidate as failed."""
     proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
-    proxy_url = proxy_config.get_proxy_url(browser_id) if proxy_config else None
-
-    if not proxy_url:
+    if not proxy_config:
         return  # no proxy configured; proxy is not required for this browser
+
+    session_id = await _select_proxy_session_id(sandbox, proxy_config, browser_id, target_domain)
+    proxy_url = proxy_config.get_proxy_url(session_id)
 
     ip_before = await _get_sandbox_public_ip(sandbox)
     logger.debug(f"Sandbox {sandbox.name} IP before proxy: {ip_before}")
