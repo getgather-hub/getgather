@@ -41,8 +41,8 @@ def test_candidate_session_ids() -> None:
 
 
 def test_parse_ttfb_ok() -> None:
-    assert parse_ttfb("0.321") == pytest.approx(0.321)
-    assert parse_ttfb(" 1.5\n") == pytest.approx(1.5)
+    assert parse_ttfb("0.321") == 0.321
+    assert parse_ttfb(" 1.5\n") == 1.5
 
 
 def test_parse_ttfb_invalid() -> None:
