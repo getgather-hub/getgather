@@ -1,4 +1,4 @@
-<html rb-domain="cvs" rb-trusted-actions>
+<html rb-domain="cvs" rb-after-submit-delay-ms="5000">
   <head>
     <title>Sign In to CVS</title>
   </head>
@@ -10,7 +10,7 @@
           type="radio"
           name="signin-option-radio"
           id="sms-radio"
-          data-testid="signin-method-password"
+          data-testid="signin-method-sms"
           rb-match="input[value='sms']"
           value="sms-radio"
           checked
