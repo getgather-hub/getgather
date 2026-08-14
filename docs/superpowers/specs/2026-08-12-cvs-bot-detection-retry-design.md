@@ -79,12 +79,12 @@ POST email
 
 ## Edge cases
 
-| Case | Behavior |
-|------|----------|
-| Bot clears after reload | Sign-in pattern proceeds normally |
-| Bot persists through 3 reloads | 4th match stops with captcha |
-| No consumed email | Reload still runs; form may need user input |
-| Other brands using reload-before-actions | Unchanged default max=1 |
+| Case                                     | Behavior                                    |
+| ---------------------------------------- | ------------------------------------------- |
+| Bot clears after reload                  | Sign-in pattern proceeds normally           |
+| Bot persists through 3 reloads           | 4th match stops with captcha                |
+| No consumed email                        | Reload still runs; form may need user input |
+| Other brands using reload-before-actions | Unchanged default max=1                     |
 
 ## Out of scope
 
