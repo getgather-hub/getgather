@@ -29,6 +29,7 @@ from getgather.browser import (
     wait_for_ready_state,
     zen_navigate_with_retry,
 )
+from getgather.cloak_human import human_pre_action_idle, reset_cursor_for_tab
 from getgather.config import settings
 from getgather.mcp.html_renderer import DEFAULT_TITLE, render_form
 from getgather.zen_distill import (
@@ -321,6 +322,68 @@ def is_incognito_request(headers: dict[str, str]) -> bool:
     return headers.get("x-incognito", "0") == "1"
 
 
+def _html_int_attr(element: Tag | None, name: str, default: int = 0) -> int:
+    if element is None:
+        return default
+    raw = element.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw))
+    except ValueError:
+        return default
+
+
+def _pattern_reload_max(root: Tag | None) -> int:
+    """Max reloads for rb-reload-before-actions; default 1 preserves one-shot behavior."""
+    return _html_int_attr(root, "rb-reload-max", 1)
+
+
+def _pattern_html_root(patterns: list[Pattern], match_name: str) -> Tag | None:
+    pattern_item = next((item for item in patterns if item.name == match_name), None)
+    if pattern_item is None:
+        return None
+    root = pattern_item.pattern.find("html")
+    return root if isinstance(root, Tag) else None
+
+
+async def _maybe_reload_for_matched_pattern(
+    page: zd.Tab,
+    match: Match,
+    patterns: list[Pattern],
+    *,
+    current_reload_count: int = 0,
+) -> bool:
+    """Reload when the distilled pattern requests it, up to rb-reload-max (default 1)."""
+    root = _pattern_html_root(patterns, match.name)
+    if root is None:
+        return False
+    if "rb-reload-before-actions" not in root.attrs:
+        return False
+
+    reload_max = _pattern_reload_max(root)
+    if current_reload_count >= reload_max:
+        logger.info(
+            f"Reload budget exhausted for {match.name} "
+            f"({current_reload_count}/{reload_max}) — continuing without reload"
+        )
+        return False
+
+    settle_ms = _html_int_attr(root, "rb-settle-ms", 5000)
+    logger.info(
+        f"Reloading page before trusted actions for {match.name} "
+        f"(attempt {current_reload_count + 1}/{reload_max}, settle {settle_ms}ms)"
+    )
+    await page.reload()
+    reset_cursor_for_tab(page)
+    try:
+        await wait_for_ready_state(page, timeout=30)
+    except Exception as exc:
+        logger.warning(f"Ready state after reload: {exc}")
+    await asyncio.sleep(settle_ms / 1000)
+    return True
+
+
 async def distill_post_loop(
     page: zd.Tab,
     id: str,
@@ -353,6 +416,9 @@ async def distill_post_loop(
     except Exception as e:
         logger.warning(f"Error waiting for page ready state: {e}")
 
+    reload_counts: dict[str, int] = {}
+    consumed_fields: dict[str, str] = {}
+
     for iteration in range(max):
         logger.debug(f"Iteration {iteration + 1} of {max}")
         await asyncio.sleep(TICK)
@@ -376,17 +442,24 @@ async def distill_post_loop(
         inputs = document.find_all("input")
         pending_actions: list[dict[str, str]] = []
         html_element = document.find("html")
+        html_tag = html_element if isinstance(html_element, Tag) else None
         action_delay_ms = (
-            int(str(html_element.get("rb-action-delay") or 0))
-            if isinstance(html_element, Tag)
-            else 0
+            int(str(html_tag.get("rb-action-delay") or 0)) if html_tag is not None else 0
         )
         element_config = (
             ElementConfig(action_delay_ms=action_delay_ms) if action_delay_ms > 0 else None
         )
-        trusted_actions = (
-            isinstance(html_element, Tag) and "rb-trusted-actions" in html_element.attrs
-        )
+        trusted_actions = html_tag is not None and "rb-trusted-actions" in html_tag.attrs
+        pattern_humanize = html_tag is not None and "rb-humanize" in html_tag.attrs
+        use_cdp_actions = trusted_actions or pattern_humanize
+        humanize = pattern_humanize
+        if humanize:
+            element_config = ElementConfig(
+                action_delay_ms=action_delay_ms,
+                humanize=True,
+            )
+        elif use_cdp_actions and action_delay_ms > 0:
+            element_config = ElementConfig(action_delay_ms=action_delay_ms)
 
         if match.distilled == current.distilled:
             logger.info(f"Still the same: {match.name}")
@@ -397,7 +470,27 @@ async def distill_post_loop(
                 return HTMLResponse(render(str(document.find("body")), options))
             continue
 
+        pattern_reload_count = reload_counts.get(match.name, 0)
+        if await _maybe_reload_for_matched_pattern(
+            page, match, patterns, current_reload_count=pattern_reload_count
+        ):
+            reload_counts[match.name] = pattern_reload_count + 1
+            if consumed_fields:
+                fields.update(consumed_fields)
+                logger.info(
+                    f"Restored {len(consumed_fields)} field(s) after reload for {match.name}"
+                )
+            # Force re-processing of the next match (e.g. cvs-signin after bot banner clears).
+            current = Match(name="", priority=-1, distilled="")
+            continue
+
         current = match
+
+        if use_cdp_actions:
+            pre_action_ms = _html_int_attr(html_tag, "rb-pre-action-idle-ms", 0)
+            if pre_action_ms > 0:
+                logger.info(f"Pre-action idle mouse for {pre_action_ms}ms")
+                await human_pre_action_idle(page, pre_action_ms)
 
         if await terminate(distilled):
             logger.info("Finished!")
@@ -536,7 +629,7 @@ async def distill_post_loop(
                         names.append(name_str)
                         input["value"] = value
                         current.distilled = str(document)
-                        if trusted_actions and input_type not in ("checkbox", "radio"):
+                        if use_cdp_actions and input_type not in ("checkbox", "radio"):
                             text_element = await page_query_selector(
                                 page,
                                 selector if selector is not None else "",
@@ -556,6 +649,7 @@ async def distill_post_loop(
                                 "value": str(value),
                                 "action_delay_ms": str(action_delay_ms),
                             })
+                        consumed_fields[name_str] = str(value)
                         del fields[name_str]
                     else:
                         logger.info(f"No form data found for {name}")
@@ -572,17 +666,22 @@ async def distill_post_loop(
                 })
 
         should_submit = False
+        submit_delay_ms = _html_int_attr(html_tag, "rb-submit-delay-ms", 0)
+        after_submit_delay_ms = _html_int_attr(html_tag, "rb-after-submit-delay-ms", 0)
         SUBMIT_BUTTON = "button[rb-autoclick], button[gg-autoclick], button[type=submit]"
         if document.select(SUBMIT_BUTTON):
             if len(names) > 0 and expected_field_count == len(names):
                 logger.info("Submitting form, all fields are filled...")
+                if submit_delay_ms > 0:
+                    logger.info(f"Waiting {submit_delay_ms}ms before submit")
+                    await asyncio.sleep(submit_delay_ms / 1000)
                 for submit_button in document.select(SUBMIT_BUTTON):
                     submit_selector, frame_selector = get_selector(
                         str(get_match_attr(submit_button))
                     )
                     if not submit_selector:
                         continue
-                    if trusted_actions:
+                    if use_cdp_actions:
                         submit_element = await page_query_selector(
                             page,
                             submit_selector,
@@ -591,8 +690,7 @@ async def distill_post_loop(
                         )
                         if submit_element:
                             logger.info(f"Trusted CDP mouse click on {submit_selector}")
-                            await submit_element.element.mouse_click()
-                            await asyncio.sleep(0.25)
+                            await submit_element.trusted_click()
                         else:
                             logger.warning(f"Trusted submit could not find {submit_selector}")
                     else:
@@ -645,6 +743,9 @@ async def distill_post_loop(
             await asyncio.sleep(0.25)
 
         if should_submit:
+            if after_submit_delay_ms > 0:
+                logger.info(f"Waiting {after_submit_delay_ms}ms after submit")
+                await asyncio.sleep(after_submit_delay_ms / 1000)
             continue
 
     hostname_attr: str | None = getattr(page, "hostname", None)  # type: ignore[assignment]
