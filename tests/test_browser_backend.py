@@ -153,3 +153,69 @@ def test_cdp_raw_route_relays_verbatim(monkeypatch: MonkeyPatch) -> None:
     to_browser, to_client = _relay_roundtrip(monkeypatch, "/api/v1/browsers/BID/cdp", "abc1234567")
     assert json.loads(to_browser)["params"]["targetId"] == "abc1234567"
     assert json.loads(to_client)["result"]["targetId"] == "abc1234567"
+
+
+def test_get_targets_response_is_namespaced() -> None:
+    """`Target.getTargets` answers with `result.targetInfos[]`, a list the old shape-matching
+    patch skipped entirely. zendriver's `update_targets` builds each tab's websocket URL as
+    `/devtools/page/{target_id}` straight from that list, so an unpatched id produces a raw
+    devtools URL and forces `find_browser_id` to scan the whole fleet."""
+    message = json.dumps({
+        "id": 3,
+        "result": {
+            "targetInfos": [
+                {"targetId": "PAGE1", "type": "page"},
+                {"targetId": "PAGE2", "type": "page"},
+            ]
+        },
+    })
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert [t["targetId"] for t in patched["result"]["targetInfos"]] == [
+        "Byr3kieca@PAGE1",
+        "Byr3kieca@PAGE2",
+    ]
+
+
+def test_attached_to_target_event_is_namespaced() -> None:
+    message = json.dumps({
+        "method": "Target.attachedToTarget",
+        "params": {"sessionId": "S1", "targetInfo": {"targetId": "PAGE1", "type": "page"}},
+    })
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["params"]["targetInfo"]["targetId"] == "Byr3kieca@PAGE1"
+
+
+def test_target_created_event_is_namespaced() -> None:
+    message = json.dumps({
+        "method": "Target.targetCreated",
+        "params": {"targetInfo": {"targetId": "PAGE1", "type": "page"}},
+    })
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["params"]["targetInfo"]["targetId"] == "Byr3kieca@PAGE1"
+
+
+def test_namespacing_is_idempotent() -> None:
+    message = json.dumps({"id": 1, "result": {"targetId": "Byr3kieca@PAGE1"}})
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["result"]["targetId"] == "Byr3kieca@PAGE1"
+
+
+def test_outbound_strips_namespace_for_any_method() -> None:
+    """The browser only knows its own raw ids, so every id the client sends back must be
+    stripped — including on methods no allowlist happened to enumerate."""
+    for method in (
+        "Target.attachToTarget",
+        "Target.closeTarget",
+        "Target.getTargetInfo",
+        "Target.activateTarget",
+        "Browser.getWindowForTarget",
+    ):
+        message = json.dumps({"id": 1, "method": method, "params": {"targetId": "Byr3kieca@PAGE1"}})
+        patched = json.loads(browsers_router.patch_cdp_target_outbound(message, "Byr3kieca"))
+        assert patched["params"]["targetId"] == "PAGE1", method
+
+
+def test_patch_passes_through_messages_without_target_ids() -> None:
+    message = json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://a.test"}})
+    assert browsers_router.patch_cdp_target_inbound(message, "Byr3kieca") == message
+    assert browsers_router.patch_cdp_target_outbound(message, "Byr3kieca") == message
