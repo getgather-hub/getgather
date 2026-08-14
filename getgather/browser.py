@@ -193,15 +193,18 @@ def find_browser_tab(browser: zd.Browser, target_id: str) -> zd.Tab | None:
     ``_handle_target_update`` does for newly created targets) and replace it in
     ``browser.targets`` so subsequent lookups return the ``Tab`` as well.
     """
+    # target.target_id comes back namespaced as `browser_id@raw_id` when zendriver discovers
+    # it via the self-proxied /cdp/{browser_id} connection (see patch_cdp_target). Callers are
+    # inconsistent about which form they pass in — dpage.py round-trips the namespaced
+    # `page.target_id` it got from us, pages_api_router strips to bare first — so normalize
+    # both sides to bare before comparing (mirrors the same split done in safe_close_page
+    # below).
+    bare_query_id = target_id.split("@", 1)[-1] if target_id else target_id
     for idx, target in enumerate(browser.targets):
-        # target.target_id comes back namespaced as `browser_id@raw_id` when zendriver
-        # discovers it via the self-proxied /cdp/{browser_id} connection (see
-        # patch_cdp_target); target_id here is always the bare form, so strip before
-        # comparing (mirrors the same split done in safe_close_page below).
         bare_target_id = (
             target.target_id.split("@", 1)[-1] if target.target_id else target.target_id
         )
-        if bare_target_id != target_id:
+        if bare_target_id != bare_query_id:
             continue
         if isinstance(target, zd.Tab):
             return target
