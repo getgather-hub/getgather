@@ -291,6 +291,7 @@ async def configure_remote_browser(
     container_name: str,
     origin_ip: str | None,
     target_domain: str | None,
+    country: str | None,
 ) -> str | None:
     """Apply the residential proxy to the container and verify the egress IP changed.
 
@@ -299,7 +300,7 @@ async def configure_remote_browser(
     treats the raising candidate as a loser, so the client can retry rather than get an unproxied
     browser). If no proxy is configured, this is a no-op (proxy is not required) and the current
     egress IP is returned. Mirrors `daytona_browsers._configure_remote_sandbox`."""
-    proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
+    proxy_config = await get_proxy_config(origin_ip, target_domain, settings, country)
     proxy_url = proxy_config.get_proxy_url(browser_id) if proxy_config else None
 
     ip_before = await get_container_public_ip(container_name)
@@ -347,12 +348,13 @@ class PodmanBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,  # not supported by the podman backend; always Chrome
+        country: str | None,
     ) -> dict[str, Any]:
         container_name = f"{BROWSER_NAME_PREFIX}{browser_id}"
         await launch_container(settings.CONTAINER_IMAGE, container_name)
         try:
             ip = await configure_remote_browser(
-                browser_id, container_name, origin_ip, target_domain
+                browser_id, container_name, origin_ip, target_domain, country
             )
         except ProxyVerificationError:
             # A container that fails proxy verification is unusable (wrong/no egress IP) and
@@ -363,7 +365,11 @@ class PodmanBackend:
         return {"container_name": container_name, "status": "created", "ip": ip}
 
     async def get_browser(
-        self, browser_id: str, origin_ip: str | None, target_domain: str | None
+        self,
+        browser_id: str,
+        origin_ip: str | None,
+        target_domain: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         # GET is a cheap read: proxy is configured+verified once on create (see create_browser),
         # never on get, even when x-origin-ip is present. Otherwise every GET would restart tinyproxy

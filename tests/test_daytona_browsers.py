@@ -48,7 +48,7 @@ def _fake_sandbox() -> "daytona_browsers.AsyncSandbox":
 async def test_configure_remote_sandbox_ok_when_ip_before_missing(monkeypatch: MonkeyPatch) -> None:
     # Regression: a failed ip_before measurement (None) must NOT fail a working proxy.
     _patch_proxy(monkeypatch, ips=[None, "9.9.9.9"])
-    await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None)  # pyright: ignore[reportPrivateUsage]
+    await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
@@ -58,14 +58,14 @@ async def test_configure_remote_sandbox_raises_on_ip_check_failure(
     # ip_after is None (curl/exec timeout): distinct, accurate error, not "IP unchanged".
     _patch_proxy(monkeypatch, ips=["1.1.1.1", None])
     with pytest.raises(ProxyVerificationError, match="IP check failed"):
-        await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None)  # pyright: ignore[reportPrivateUsage]
+        await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
 async def test_configure_remote_sandbox_raises_when_ip_unchanged(monkeypatch: MonkeyPatch) -> None:
     _patch_proxy(monkeypatch, ips=["1.1.1.1", "1.1.1.1"])
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
-        await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None)  # pyright: ignore[reportPrivateUsage]
+        await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None, None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
@@ -88,7 +88,9 @@ async def test_get_browser_never_reconfigures_proxy(monkeypatch: MonkeyPatch) ->
     monkeypatch.setattr(DaytonaBackend, "_get", fake_get)
     monkeypatch.setattr(DaytonaBackend, "_get_info", fake_info)
 
-    info = await _backend().get_browser("b0", origin_ip="1.2.3.4", target_domain="amazon.com")
+    info = await _backend().get_browser(
+        "b0", origin_ip="1.2.3.4", target_domain="amazon.com", country=None
+    )
     assert info == {"id": "b0"}
     assert configured is False
 
@@ -117,6 +119,7 @@ def test_create_browser_n1_short_circuits_best_of_n(monkeypatch: MonkeyPatch) ->
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ) -> dict[str, str]:
         called["browser_id"] = browser_id
         called["browser_type"] = browser_type
@@ -159,6 +162,7 @@ def test_create_browser_auto_n_gt1_invokes_best_of_n(monkeypatch: MonkeyPatch) -
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ) -> tuple[str, dict[str, str]]:
         invoked["n"] = n
         invoked["origin_ip"] = origin_ip
@@ -249,6 +253,7 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ) -> tuple[str, dict[str, str]]:
         invoked["n"] = n
         return "winner", {"id": "winner"}

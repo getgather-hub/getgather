@@ -26,6 +26,7 @@ def build_chromefleet_headers(*, target_domain: str | None = None) -> dict[str, 
         "x-origin-id": mcp_headers.get("x-origin-id", None),
         "x-origin-ua": mcp_headers.get("x-origin-ua", None),
         "x-browser-type": mcp_headers.get("x-browser-type", None),
+        "x-country": mcp_headers.get("x-country", None),
         "x-target-domains": target_domain,
     }
     return {k: v for k, v in headers.items() if v is not None}
@@ -109,17 +110,26 @@ class FleetBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         headers = {"x-origin-ip": origin_ip} if origin_ip else {}
         if browser_type:
             headers["x-browser-type"] = browser_type
+        if country:
+            headers["x-country"] = country
         response = _require(await call_chromefleet_api("POST", browser_id, headers=headers))
         return response.json()
 
     async def get_browser(
-        self, browser_id: str, origin_ip: str | None, target_domain: str | None
+        self,
+        browser_id: str,
+        origin_ip: str | None,
+        target_domain: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         headers = {"x-origin-ip": origin_ip} if origin_ip else {}
+        if country:
+            headers["x-country"] = country
         response = _require(
             await call_chromefleet_api("GET", browser_id, headers=headers, raise_for_status=False)
         )

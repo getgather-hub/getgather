@@ -197,6 +197,7 @@ class BrowserbaseBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,  # not supported by Browserbase; always their hosted Chrome
+        country: str | None,
     ) -> dict[str, Any]:
         del browser_type  # not supported by Browserbase; always their hosted Chrome
         headers = {"Content-Type": "application/json", "x-bb-api-key": _api_key()}
@@ -204,7 +205,7 @@ class BrowserbaseBackend:
         # Without it, Browserbase ends the session the moment the first WS drops, and any
         # subsequent connect to the same signingKey returns HTTP 410 Gone.
         body: dict[str, Any] = {"keepAlive": True}
-        proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
+        proxy_config = await get_proxy_config(origin_ip, target_domain, settings, country)
         if proxy_config:
             proxy_url = proxy_config.get_proxy_url(browser_id)
             body["proxies"] = [{"type": "external", "server": proxy_url}]
@@ -342,7 +343,11 @@ class BrowserbaseBackend:
         return ""  # self-relayed; sentinel tells the router to skip websocket_proxy
 
     async def get_browser(
-        self, browser_id: str, origin_ip: str | None, target_domain: str | None
+        self,
+        browser_id: str,
+        origin_ip: str | None,
+        target_domain: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         if browser_id not in self._sessions:
             raise BrowserNotFound(browser_id)

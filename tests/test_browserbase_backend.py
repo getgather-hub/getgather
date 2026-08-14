@@ -125,7 +125,7 @@ async def test_browserbase_create_browser_stores_connect_url_mapping(
 
     backend = BrowserbaseBackend()
     # The caller-supplied id is ignored; Browserbase mints its own session id.
-    result = await backend.create_browser("ignored-id", None, None, None)
+    result = await backend.create_browser("ignored-id", None, None, None, None)
 
     assert result == {"browser_id": SESSION_ID, "status": "created", "ip": None}
 
@@ -171,7 +171,7 @@ async def test_browserbase_create_browser_attaches_residential_proxy(
     monkeypatch.setattr(browserbase_browsers, "get_proxy_config", fake_get_proxy_config)
 
     backend = BrowserbaseBackend()
-    result = await backend.create_browser("bid", "1.2.3.4", "amazon.com", None)
+    result = await backend.create_browser("bid", "1.2.3.4", "amazon.com", None, None)
 
     assert result == {"browser_id": SESSION_ID, "status": "created", "ip": None}
     assert fake_client.create_call["json"] == {
@@ -197,7 +197,7 @@ async def test_browserbase_create_browser_omits_proxies_without_proxy(
     monkeypatch.setattr(browserbase_browsers, "get_proxy_config", fake_get_proxy_config)
 
     backend = BrowserbaseBackend()
-    await backend.create_browser("bid", "1.2.3.4", "amazon.com", None)
+    await backend.create_browser("bid", "1.2.3.4", "amazon.com", None, None)
     assert fake_client.create_call["json"] == {"keepAlive": True}
 
 
@@ -223,7 +223,7 @@ async def test_browserbase_cdp_proxy_single_attempt_on_410(
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
     backend = BrowserbaseBackend()
-    await backend.create_browser("ignored", None, None, None)
+    await backend.create_browser("ignored", None, None, None, None)
     monkeypatch.setattr(browsers_router, "backend", backend)
 
     connect_calls: list[int] = []
@@ -262,7 +262,7 @@ async def test_browserbase_delete_browser_releases_session_via_post(
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
     backend = BrowserbaseBackend()
-    await backend.create_browser("ignored", None, None, None)
+    await backend.create_browser("ignored", None, None, None, None)
     assert await backend.get_cdp_websocket_remote_url(SESSION_ID) == CONNECT_URL
 
     result = await backend.delete_browser(SESSION_ID)
@@ -286,7 +286,7 @@ async def test_browserbase_delete_browser_swallows_404(monkeypatch: MonkeyPatch)
     monkeypatch.setattr(httpx, "AsyncClient", factory)
 
     backend = BrowserbaseBackend()
-    await backend.create_browser("ignored", None, None, None)
+    await backend.create_browser("ignored", None, None, None, None)
 
     result = await backend.delete_browser(SESSION_ID)
     assert result == {"browser_id": SESSION_ID, "status": "deleted"}
@@ -350,7 +350,7 @@ async def test_browserbase_create_browser_waits_until_cdp_ready(
     monkeypatch.setattr(websockets, "connect", fake_connect)
 
     backend = BrowserbaseBackend()
-    result = await backend.create_browser("ignored", None, None, None)
+    result = await backend.create_browser("ignored", None, None, None, None)
 
     assert result == {"browser_id": SESSION_ID, "status": "created", "ip": None}
     # Exactly one probe was sent (Target.getTargets with id=-2) and it succeeded first try.
@@ -389,7 +389,7 @@ async def test_browserbase_create_browser_never_ready_releases_and_raises(
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     with pytest.raises(RuntimeError, match="never became CDP-ready"):
-        await backend.create_browser("ignored", None, None, None)
+        await backend.create_browser("ignored", None, None, None, None)
 
     # Cleanup released the upstream session and dropped the dead id from the local mapping.
     assert fake_client.release_call["url"] == f"{BROWSERBASE_SESSIONS_URL}/{SESSION_ID}"

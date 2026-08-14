@@ -282,3 +282,72 @@ async def test_get_proxy_config_no_provider_returns_none() -> None:
     ):
         result = await get_proxy_config("1.2.3.4", None, s)
     assert result is None
+
+
+# --- get_proxy_config: x-country ---
+
+
+@pytest.mark.asyncio
+async def test_get_proxy_config_country_wins_without_maxmind_call() -> None:
+    # x-country present -> no MaxMind call at all, even with an origin_ip set.
+    s = _settings(
+        MASSIVE_PROXY_USERNAME="mu",
+        MASSIVE_PROXY_PASSWORD="mp",
+        MAXMIND_ACCOUNT_ID=1,
+        MAXMIND_LICENSE_KEY="k",
+        DEFAULT_PROXY_TYPE="massive",
+    )
+    get_location_mock = AsyncMock(side_effect=AssertionError("MaxMind must not be called"))
+    with patch("getgather.browsers.residential_proxy.get_location", new=get_location_mock):
+        result = await get_proxy_config("1.2.3.4", None, s, "de")
+    assert result is not None
+    assert "country-de" in result.get_proxy_url("sess")
+    get_location_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_proxy_config_country_without_origin_ip() -> None:
+    # Country alone is enough to build the proxy; MaxMind is not required.
+    s = _settings(
+        MASSIVE_PROXY_USERNAME="mu",
+        MASSIVE_PROXY_PASSWORD="mp",
+        DEFAULT_PROXY_TYPE="massive",
+    )
+    result = await get_proxy_config(None, None, s, "US")
+    assert result is not None
+    assert "country-us" in result.get_proxy_url("sess")
+
+
+@pytest.mark.asyncio
+async def test_get_proxy_config_invalid_country_skips_proxy_not_maxmind() -> None:
+    # An invalid x-country is treated as absent/miss: skip proxy, do not fall back to MaxMind.
+    s = _settings(
+        MASSIVE_PROXY_USERNAME="mu",
+        MASSIVE_PROXY_PASSWORD="mp",
+        MAXMIND_ACCOUNT_ID=1,
+        MAXMIND_LICENSE_KEY="k",
+    )
+    get_location_mock = AsyncMock(side_effect=AssertionError("MaxMind must not be called"))
+    with patch("getgather.browsers.residential_proxy.get_location", new=get_location_mock):
+        result = await get_proxy_config("1.2.3.4", None, s, "xyz")
+    assert result is None
+    get_location_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_proxy_config_empty_country_falls_back_to_maxmind() -> None:
+    # An empty string country is falsy -> same as absent, so MaxMind is used as usual.
+    s = _settings(
+        MASSIVE_PROXY_USERNAME="mu",
+        MASSIVE_PROXY_PASSWORD="mp",
+        MAXMIND_ACCOUNT_ID=1,
+        MAXMIND_LICENSE_KEY="k",
+        DEFAULT_PROXY_TYPE="massive",
+    )
+    loc = _us_location()
+    with patch(
+        "getgather.browsers.residential_proxy.get_location", new=AsyncMock(return_value=loc)
+    ):
+        result = await get_proxy_config("1.2.3.4", None, s, "")
+    assert result is not None
+    assert "country-us" in result.get_proxy_url("sess")

@@ -54,6 +54,7 @@ def test_create_browser_auto_name_starts_with_b(monkeypatch: MonkeyPatch) -> Non
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ):
         return {
             "container_name": f"chromium-{browser_id}",

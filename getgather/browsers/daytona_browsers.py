@@ -115,13 +115,14 @@ async def _configure_remote_sandbox(
     browser_id: str,
     origin_ip: str | None,
     target_domain: str | None,
+    country: str | None,
 ) -> None:
     """Apply the residential proxy to the sandbox and verify egress IP changed.
 
     The proxy is mandatory: if one is configured it MUST apply and change the egress IP, otherwise
     this raises ProxyVerificationError. If no proxy is configured, this is a no-op (proxy is not
     required). Callers let the error propagate; best-of-N treats a raising candidate as failed."""
-    proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
+    proxy_config = await get_proxy_config(origin_ip, target_domain, settings, country)
     proxy_url = proxy_config.get_proxy_url(browser_id) if proxy_config else None
 
     if not proxy_url:
@@ -185,6 +186,7 @@ class DaytonaBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         lock = self._locks.setdefault(browser_id, asyncio.Lock())
         async with lock:
@@ -192,7 +194,9 @@ class DaytonaBackend:
             # Proxy is mandatory when configured: let ProxyVerificationError propagate (the endpoint
             # maps it to 500) so the client can retry rather than get an unproxied browser.
             try:
-                await _configure_remote_sandbox(sandbox, browser_id, origin_ip, target_domain)
+                await _configure_remote_sandbox(
+                    sandbox, browser_id, origin_ip, target_domain, country
+                )
             except ProxyVerificationError:
                 # A sandbox that fails proxy verification is unusable (wrong/no egress IP) and
                 # would otherwise sit around until Daytona's auto_stop/auto_delete TTL. Delete now.
@@ -202,7 +206,11 @@ class DaytonaBackend:
             return await self._get_info(sandbox)
 
     async def get_browser(
-        self, browser_id: str, origin_ip: str | None, target_domain: str | None
+        self,
+        browser_id: str,
+        origin_ip: str | None,
+        target_domain: str | None,
+        country: str | None,
     ) -> dict[str, Any]:
         sandbox = await self._get(_sandbox_name(browser_id))
         if sandbox is None:

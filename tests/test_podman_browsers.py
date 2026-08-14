@@ -35,7 +35,7 @@ def _patch_proxy(monkeypatch: MonkeyPatch, *, ips: list[str | None], proxy_ok: b
 async def test_configure_remote_browser_ok_when_ip_before_missing(monkeypatch: MonkeyPatch) -> None:
     # Regression: a failed ip_before measurement (None) must NOT fail a working proxy.
     _patch_proxy(monkeypatch, ips=[None, "9.9.9.9"])
-    ip = await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None)
+    ip = await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None, None)
     assert ip == "9.9.9.9"
 
 
@@ -43,7 +43,7 @@ async def test_configure_remote_browser_ok_when_ip_before_missing(monkeypatch: M
 async def test_configure_remote_browser_raises_on_apply_failure(monkeypatch: MonkeyPatch) -> None:
     _patch_proxy(monkeypatch, ips=["1.1.1.1"], proxy_ok=False)
     with pytest.raises(ProxyVerificationError, match="Proxy failed to apply"):
-        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None)
+        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None, None)
 
 
 @pytest.mark.asyncio
@@ -53,14 +53,14 @@ async def test_configure_remote_browser_raises_on_ip_check_failure(
     # ip_after is None (curl/exec timeout): distinct, accurate error, not "IP unchanged".
     _patch_proxy(monkeypatch, ips=["1.1.1.1", None])
     with pytest.raises(ProxyVerificationError, match="IP check failed"):
-        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None)
+        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None, None)
 
 
 @pytest.mark.asyncio
 async def test_configure_remote_browser_raises_when_ip_unchanged(monkeypatch: MonkeyPatch) -> None:
     _patch_proxy(monkeypatch, ips=["1.1.1.1", "1.1.1.1"])
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
-        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None)
+        await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None, None)
 
 
 @pytest.mark.asyncio
@@ -75,7 +75,7 @@ async def test_configure_remote_browser_noop_without_proxy(monkeypatch: MonkeyPa
     monkeypatch.setattr(podman_browsers, "get_proxy_config", fake_get_proxy_config)
     monkeypatch.setattr(podman_browsers, "get_container_public_ip", fake_public_ip)
 
-    ip = await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None)
+    ip = await podman_browsers.configure_remote_browser("b0", "chromium-b0", None, None, None)
     assert ip == "1.1.1.1"
 
 
@@ -104,7 +104,9 @@ async def test_get_browser_never_reconfigures_proxy(monkeypatch: MonkeyPatch) ->
     monkeypatch.setattr(podman_browsers, "get_container_last_activity", fake_last_activity)
     monkeypatch.setattr(podman_browsers, "get_container_public_ip", fake_public_ip)
 
-    info = await PodmanBackend().get_browser("b0", origin_ip="1.2.3.4", target_domain="amazon.com")
+    info = await PodmanBackend().get_browser(
+        "b0", origin_ip="1.2.3.4", target_domain="amazon.com", country=None
+    )
     assert info == {"last_activity_timestamp": 1.0, "ip": "9.9.9.9"}
     assert configured is False
 
@@ -130,7 +132,7 @@ async def test_create_browser_propagates_proxy_verification_error(monkeypatch: M
     monkeypatch.setattr(podman_browsers, "kill_container", fake_kill)
 
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
-        await PodmanBackend().create_browser("b0", "1.2.3.4", "amazon.com", None)
+        await PodmanBackend().create_browser("b0", "1.2.3.4", "amazon.com", None, None)
 
     assert killed == ["chromium-b0"]
 
@@ -160,6 +162,7 @@ async def test_best_of_n_treats_proxy_failure_as_loser(monkeypatch: MonkeyPatch)
             origin_ip: str | None,
             target_domain: str | None,
             browser_type: str | None,
+            country: str | None,
         ) -> dict[str, Any]:
             if browser_id == "b0":
                 raise ProxyVerificationError("IP unchanged after proxy")
@@ -176,6 +179,6 @@ async def test_best_of_n_treats_proxy_failure_as_loser(monkeypatch: MonkeyPatch)
     ids = iter(["b0", "b1"])
     monkeypatch.setattr(backend_module, "new_browser_id", lambda: next(ids))
 
-    winner_id, info = await best_of_n(_Backend(), 2, "1.2.3.4", "amazon.com", None)
+    winner_id, info = await best_of_n(_Backend(), 2, "1.2.3.4", "amazon.com", None, None)
     assert winner_id == "b1"
     assert info == {"id": "b1"}

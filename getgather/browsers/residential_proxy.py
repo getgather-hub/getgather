@@ -163,23 +163,35 @@ async def get_proxy_config(
     origin_ip: str | None,
     target_domain: str | None,
     settings: "BrowserSettings",
+    country: str | None = None,
 ) -> "OxylabsProxyConfig | MassiveProxyConfig | None":
-    if not origin_ip:
-        logger.info("No origin IP provided — skipping proxy selection")
-        return None
+    location: GeoLocation | None = None
 
-    if not settings.MAXMIND_ENABLED:
-        logger.info(
-            f"x-origin-ip={origin_ip} provided but MaxMind not configured — skipping proxy selection"
+    if country:
+        # x-country wins when present — no MaxMind call, even if origin_ip is also set. An
+        # invalid code is treated as absent (skip proxy), not a fallback to MaxMind.
+        try:
+            location = GeoLocation(country=country)
+        except ValueError:
+            logger.info(f"Invalid x-country={country!r} — skipping proxy selection")
+            return None
+    else:
+        if not origin_ip:
+            logger.info("No origin IP provided — skipping proxy selection")
+            return None
+
+        if not settings.MAXMIND_ENABLED:
+            logger.info(
+                f"x-origin-ip={origin_ip} provided but MaxMind not configured — skipping proxy selection"
+            )
+            return None
+
+        location = await get_location(
+            origin_ip, settings.MAXMIND_ACCOUNT_ID, settings.MAXMIND_LICENSE_KEY
         )
-        return None
-
-    location = await get_location(
-        origin_ip, settings.MAXMIND_ACCOUNT_ID, settings.MAXMIND_LICENSE_KEY
-    )
-    if not location:
-        logger.info(f"Could not resolve location for {origin_ip} — skipping proxy selection")
-        return None
+        if not location:
+            logger.info(f"Could not resolve location for {origin_ip} — skipping proxy selection")
+            return None
 
     proxies: dict[Literal["oxylabs", "massive"], OxylabsProxyConfig | MassiveProxyConfig] = {}
     if settings.OXYLABS_PROXY_ENABLED:

@@ -222,15 +222,18 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
         origin_ip = request.headers.get("x-origin-ip")
         target_domain = request.headers.get("x-target-domains")
         browser_type = request.headers.get("x-browser-type")
+        country = request.headers.get("x-country") or None
         explicit = settings.BROWSER_BEST_OF_N
         n = max(1, explicit if explicit is not None else backend.default_best_of_n)
         if n == 1:
             browser_id = new_browser_id()
             result = await backend.create_browser(
-                browser_id, origin_ip, target_domain, browser_type
+                browser_id, origin_ip, target_domain, browser_type, country
             )
         else:
-            browser_id, result = await best_of_n(backend, n, origin_ip, target_domain, browser_type)
+            browser_id, result = await best_of_n(
+                backend, n, origin_ip, target_domain, browser_type, country
+            )
         logger.info(f"Browser {browser_id} is started.")
         return {"browser_id": browser_id, **result}
     except Exception as e:
@@ -246,7 +249,10 @@ async def create_browser(browser_id: str, request: Request) -> dict[str, Any]:
         origin_ip = request.headers.get("x-origin-ip")
         target_domain = request.headers.get("x-target-domains")
         browser_type = request.headers.get("x-browser-type")
-        result = await backend.create_browser(browser_id, origin_ip, target_domain, browser_type)
+        country = request.headers.get("x-country") or None
+        result = await backend.create_browser(
+            browser_id, origin_ip, target_domain, browser_type, country
+        )
         logger.info(f"Browser {browser_id} is started.")
         return {"browser_id": browser_id, **result}
     except Exception as e:
@@ -277,8 +283,9 @@ async def get_browser(browser_id: str, request: Request) -> dict[str, Any]:
     logger.info(f"Querying browser {browser_id}...")
     origin_ip = request.headers.get("x-origin-ip")
     target_domain = request.headers.get("x-target-domains")
+    country = request.headers.get("x-country") or None
     try:
-        return await backend.get_browser(browser_id, origin_ip, target_domain)
+        return await backend.get_browser(browser_id, origin_ip, target_domain, country)
     except BrowserNotFound:
         detail = f"Browser {browser_id} not found!"
         logger.warning(detail)
@@ -310,7 +317,10 @@ async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: boo
             origin_ip = client_ws.headers.get("x-origin-ip")
             target_domain = client_ws.headers.get("x-target-domains")
             browser_type = client_ws.headers.get("x-browser-type")
-            await backend.create_browser(browser_id, origin_ip, target_domain, browser_type)
+            country = client_ws.headers.get("x-country") or None
+            await backend.create_browser(
+                browser_id, origin_ip, target_domain, browser_type, country
+            )
             logger.info(f"[CDP] Browser {browser_id} started")
         except Exception as e:
             logger.error(f"[CDP] Failed to auto-start browser {browser_id}: {e}")
