@@ -15,6 +15,9 @@ def _backend() -> DaytonaBackend:
 
 def _patch_proxy(monkeypatch: MonkeyPatch, *, ips: list[str | None], proxy_ok: bool = True) -> None:
     """Force a configured proxy and drive _get_sandbox_public_ip's return sequence."""
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 1)
 
     class _Cfg:
         def get_proxy_url(self, browser_id: str) -> str:
@@ -66,6 +69,149 @@ async def test_configure_remote_sandbox_raises_when_ip_unchanged(monkeypatch: Mo
     _patch_proxy(monkeypatch, ips=["1.1.1.1", "1.1.1.1"])
     with pytest.raises(ProxyVerificationError, match="IP unchanged"):
         await daytona_browsers._configure_remote_sandbox(_fake_sandbox(), "b0", None, None)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_picks_fastest_proxy_session(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 3)
+
+    applied: list[str] = []
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://user-sess-{session_id}:pass@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    async def fake_configure_sandbox_proxy(sandbox: Any, proxy_url: str) -> bool:
+        applied.append(proxy_url)
+        return True
+
+    ips = iter(["1.1.1.1", "9.9.9.9"])
+
+    async def fake_public_ip(*args: Any, **kwargs: Any):
+        return next(ips)
+
+    class _ExecResult:
+        def __init__(self, exit_code: int, result: str) -> None:
+            self.exit_code = exit_code
+            self.result = result
+
+    class _Process:
+        async def exec(self, cmd: str) -> _ExecResult:
+            assert "https://amazon.com/" in cmd
+            if "b0-p0" in cmd:
+                return _ExecResult(0, "0.50")
+            if "b0-p1" in cmd:
+                return _ExecResult(0, "0.10")
+            if "b0-p2" in cmd:
+                return _ExecResult(28, "")
+            return _ExecResult(1, "")
+
+    class _RaceSandbox:
+        name = "chromium-test"
+        process = _Process()
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+    monkeypatch.setattr(daytona_browsers, "_configure_sandbox_proxy", fake_configure_sandbox_proxy)
+    monkeypatch.setattr(daytona_browsers, "_get_sandbox_public_ip", fake_public_ip)
+
+    await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+        cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+        "b0",
+        "1.2.3.4",
+        "amazon.com",
+    )
+    assert applied == ["http://user-sess-b0-p1:pass@proxy.example:9999"]
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_all_proxy_probes_fail(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 2)
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://user-sess-{session_id}:pass@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    class _ExecResult:
+        exit_code = 28
+        result = ""
+
+    class _Process:
+        async def exec(self, cmd: str) -> _ExecResult:
+            return _ExecResult()
+
+    class _RaceSandbox:
+        name = "chromium-test"
+        process = _Process()
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+
+    with pytest.raises(ProxyVerificationError, match="no proxy candidate"):
+        await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+            cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+            "b0",
+            "1.2.3.4",
+            "amazon.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_configure_remote_sandbox_n1_uses_browser_id_session(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from getgather.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "BROWSER_PROXY_BEST_OF_N", 1)
+    applied: list[str] = []
+
+    class _Cfg:
+        def get_proxy_url(self, session_id: str) -> str:
+            return f"http://sess-{session_id}@proxy.example:9999"
+
+    async def fake_get_proxy_config(*args: Any, **kwargs: Any):
+        return _Cfg()
+
+    async def fake_configure_sandbox_proxy(sandbox: Any, proxy_url: str) -> bool:
+        applied.append(proxy_url)
+        return True
+
+    ips = iter([None, "9.9.9.9"])
+
+    async def fake_public_ip(*args: Any, **kwargs: Any):
+        return next(ips)
+
+    class _RaceSandbox:
+        name = "chromium-test"
+
+        class process:
+            @staticmethod
+            async def exec(cmd: str) -> Any:
+                raise AssertionError(f"probe should not run for N=1: {cmd}")
+
+    monkeypatch.setattr(daytona_browsers, "get_proxy_config", fake_get_proxy_config)
+    monkeypatch.setattr(daytona_browsers, "_configure_sandbox_proxy", fake_configure_sandbox_proxy)
+    monkeypatch.setattr(daytona_browsers, "_get_sandbox_public_ip", fake_public_ip)
+
+    await daytona_browsers._configure_remote_sandbox(  # pyright: ignore[reportPrivateUsage]
+        cast("daytona_browsers.AsyncSandbox", _RaceSandbox()),
+        "b0",
+        "1.2.3.4",
+        None,
+    )
+    assert applied == ["http://sess-b0@proxy.example:9999"]
 
 
 @pytest.mark.asyncio
@@ -232,7 +378,7 @@ async def test_create_omits_env_when_browser_type_none(monkeypatch: MonkeyPatch)
 
 def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: MonkeyPatch) -> None:
     # When BROWSER_BEST_OF_N is unset (None), the router falls back to the backend's own default
-    # (DaytonaBackend.default_best_of_n == 3) instead of hard-coding 1.
+    # (DaytonaBackend.default_best_of_n == 1) and short-circuits the race like explicit N=1.
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -241,19 +387,29 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
     monkeypatch.setattr(router_module.settings, "BROWSER_BEST_OF_N", None)
     monkeypatch.setattr(router_module, "backend", _backend())
 
-    invoked: dict[str, Any] = {}
+    ids = iter(["solo"])
 
-    async def fake_best_of_n(
-        backend: Any,
-        n: int,
+    def fake_new_id() -> str:
+        return next(ids)
+
+    called: dict[str, Any] = {}
+
+    async def fake_create_browser(
+        self: Any,
+        browser_id: str,
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
-    ) -> tuple[str, dict[str, str]]:
-        invoked["n"] = n
-        return "winner", {"id": "winner"}
+    ) -> dict[str, str]:
+        called["browser_id"] = browser_id
+        return {"id": browser_id}
 
-    monkeypatch.setattr(router_module, "best_of_n", fake_best_of_n)
+    async def fail_best_of_n(*args: Any, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        raise AssertionError("best_of_n should not run when backend default N=1")
+
+    monkeypatch.setattr(router_module, "new_browser_id", fake_new_id)
+    monkeypatch.setattr(DaytonaBackend, "create_browser", fake_create_browser)
+    monkeypatch.setattr(router_module, "best_of_n", fail_best_of_n)
 
     app = FastAPI()
     app.include_router(router_module.router)
@@ -261,14 +417,15 @@ def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: Mo
 
     response = client.post("/api/v1/browsers")
     assert response.status_code == 200
-    assert invoked["n"] == 3
+    assert response.json() == {"browser_id": "solo", "id": "solo"}
+    assert called["browser_id"] == "solo"
 
 
 @pytest.mark.parametrize(
     ("module_name", "expected"),
     [
         ("getgather.browsers.podman_browsers", 5),
-        ("getgather.browsers.daytona_browsers", 3),
+        ("getgather.browsers.daytona_browsers", 1),
         ("getgather.browsers.fleet_browsers", 1),
     ],
 )
