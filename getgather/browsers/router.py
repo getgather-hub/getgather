@@ -52,10 +52,12 @@ async def get_page_list(browser_id: str) -> list[str]:
     # own proxy and never reaches this path, so open_browser_cdp_client returns None there.
     try:
         client = await open_browser_cdp_client(browser_id)
-    except (BrowserNotFound, httpx.HTTPStatusError) as e:
+    except (BrowserNotFound, httpx.HTTPStatusError, httpx.TimeoutException) as e:
         # A Daytona sandbox that is stopped or archived answers 400/404 on its signed
         # preview URL, and a deleted one raises BrowserNotFound (Browserbase answers 410
-        # for an ended session). In every case the browser has no reachable pages.
+        # for an ended session). A sandbox that is up but unresponsive times out on the
+        # /json/version probe (httpx.TimeoutException). In every case the browser has no
+        # reachable pages, so skip it and let find_browser_id keep scanning the rest.
         logger.info(f"[CDP] browser {browser_id} unreachable: {type(e).__name__}")
         return []
     if client is None:
