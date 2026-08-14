@@ -100,6 +100,13 @@ CDP_TARGET_METHODS_STRIP_ID = (
     "Target.getTargetInfo",
 )
 
+# CDP events carrying a single params.targetInfo.targetId to namespace by browser_id.
+CDP_TARGET_EVENTS_WITH_TARGET_INFO = (
+    "Target.targetCreated",
+    "Target.targetInfoChanged",
+    "Target.attachedToTarget",
+)
+
 
 def patch_cdp_target(message: str, browser_id: str) -> str:
     if "targetId" not in message:
@@ -111,7 +118,7 @@ def patch_cdp_target(message: str, browser_id: str) -> str:
         return message
 
     if isinstance(data, dict):
-        if data.get("method") == "Target.targetCreated":  # pyright: ignore[reportUnknownMemberType]
+        if data.get("method") in CDP_TARGET_EVENTS_WITH_TARGET_INFO:  # pyright: ignore[reportUnknownMemberType]
             params: Any = data.get("params")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
             if isinstance(params, dict):
                 target_info: Any = params.get("targetInfo")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
@@ -134,6 +141,32 @@ def patch_cdp_target(message: str, browser_id: str) -> str:
                     browser_id,
                 )
                 return json.dumps(data)
+            if isinstance(result, dict) and "targetInfo" in result:
+                target_info = result.get("targetInfo")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if isinstance(target_info, dict) and "targetId" in target_info:
+                    target_info["targetId"] = prepend_browser_id_to_target_id(
+                        str(target_info["targetId"]),  # pyright: ignore[reportUnknownArgumentType]
+                        browser_id,
+                    )
+                    return json.dumps(data)
+            if isinstance(result, dict) and "targetInfos" in result:
+                # Target.getTargets response: a list of targetInfo objects, each with its own
+                # targetId. zendriver uses this to discover pages outside of targetCreated
+                # events (e.g. enumerating existing tabs), so an unpatched id here sends the
+                # client a raw page_id, forcing the expensive find_browser_id fleet scan when it
+                # later opens a /devtools socket for that page.
+                target_infos: Any = result.get("targetInfos")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                if isinstance(target_infos, list):
+                    patched = False
+                    for info in target_infos:  # pyright: ignore[reportUnknownVariableType]
+                        if isinstance(info, dict) and "targetId" in info:
+                            info["targetId"] = prepend_browser_id_to_target_id(
+                                str(info["targetId"]),  # pyright: ignore[reportUnknownArgumentType]
+                                browser_id,
+                            )
+                            patched = True
+                    if patched:
+                        return json.dumps(data)
 
     return message
 
