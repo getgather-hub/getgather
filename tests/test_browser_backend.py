@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Any
 
+import pytest
 import websockets
 from pytest import MonkeyPatch
 
@@ -10,6 +11,7 @@ from getgather.browsers import router as browsers_router
 from getgather.browsers.backend import create_backend
 from getgather.browsers.fleet_browsers import FleetBackend
 from getgather.browsers.podman_browsers import PodmanBackend
+from getgather.cdp_client import CDPClient, PageNotFoundError
 from getgather.config import settings
 
 
@@ -219,3 +221,43 @@ def test_patch_passes_through_messages_without_target_ids() -> None:
     message = json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://a.test"}})
     assert browsers_router.patch_cdp_target_inbound(message, "Byr3kieca") == message
     assert browsers_router.patch_cdp_target_outbound(message, "Byr3kieca") == message
+
+
+def test_signin_id_strips_namespaced_target_id() -> None:
+    """zendriver tabs report namespaced ids because the browser is attached over the
+    `/cdp/{browser_id}` proxy, but the sign-in id already carries `browser_id` and lands in a
+    user-visible /dpage/ URL, so the prefix must not survive."""
+    from getgather.mcp.dpage import SignInId
+
+    signin_id = SignInId("Byr3kieca", "Byr3kieca@PAGE1", "sess1")
+    assert signin_id.target_id == "PAGE1"
+    assert str(signin_id) == "Byr3kieca--PAGE1--sess1"
+    # Round trip: parsing our own string must be stable.
+    assert SignInId.from_str(str(signin_id)) == signin_id
+
+
+def test_find_page_target_matches_namespaced_ids() -> None:
+    """`open_cdp` goes through the namespacing proxy, so `Target.getTargets` answers with
+    prefixed ids while callers hold a raw page id. Both directions must match, and the returned
+    TargetInfo must keep its id verbatim so `attach_to_page` echoes back what the proxy sent."""
+
+    class FakeCDPClient(CDPClient):
+        def __init__(self, target_infos: list[dict[str, Any]]) -> None:
+            self._target_infos = target_infos
+
+        async def send(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None
+        ) -> dict[str, Any]:
+            assert method == "Target.getTargets"
+            return {"targetInfos": self._target_infos}
+
+    namespaced = FakeCDPClient([{"targetId": "Byr3kieca@PAGE1", "type": "page"}])
+    raw = FakeCDPClient([{"targetId": "PAGE1", "type": "page"}])
+
+    for client in (namespaced, raw):
+        for query in ("PAGE1", "Byr3kieca@PAGE1"):
+            found = asyncio.run(client.find_page_target(query))
+            assert found is client._target_infos[0]  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(PageNotFoundError):
+        asyncio.run(namespaced.find_page_target("OTHER"))

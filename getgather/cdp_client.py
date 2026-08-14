@@ -7,6 +7,7 @@ import websockets
 import websockets.asyncio.client
 
 from getgather.browser import get_remote_browser_cdp_url
+from getgather.browsers.target_ids import strip_browser_id_from_target_id
 from getgather.config import settings
 
 
@@ -142,11 +143,20 @@ class CDPClient:
             pass
 
     async def find_page_target(self, page_id: str) -> dict[str, Any]:
-        """Return the TargetInfo dict for the given page_id, or raise PageNotFoundError."""
+        """Return the TargetInfo dict for the given page_id, or raise PageNotFoundError.
+
+        `open_cdp` connects through the namespacing `/cdp/{browser_id}` proxy, so the ids in the
+        response carry a `<browser_id>@` prefix while callers hold a raw page id. Compare on the
+        stripped form so either shape matches; the returned TargetInfo keeps its id verbatim, so
+        `attach_to_page` sends back exactly what the proxy handed us."""
         result = await self.send("Target.getTargets")
         target_infos: list[dict[str, Any]] = result.get("targetInfos", [])  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+        wanted = strip_browser_id_from_target_id(page_id)
         for info in target_infos:
-            if info.get("targetId") == page_id and info.get("type") == "page":
+            target_id = info.get("targetId")
+            if not isinstance(target_id, str) or info.get("type") != "page":
+                continue
+            if strip_browser_id_from_target_id(target_id) == wanted:
                 return info
         raise PageNotFoundError(f"Page {page_id} not found in browser")
 

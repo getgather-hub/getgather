@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
 
 from getgather.browser import find_browser_tab, get_remote_browser
-from getgather.browsers.router import strip_browser_id_from_target_id
+from getgather.browsers.target_ids import strip_browser_id_from_target_id
 from getgather.cdp_client import BrowserNotFoundError, CDPError, PageNotFoundError, open_cdp
 from getgather.mcp.dpage import distill_post_loop
 from getgather.zen_distill import (
@@ -40,7 +40,14 @@ async def list_pages(browser_id: str) -> JSONResponse:
         await client.aclose()
 
     target_infos: list[dict[str, Any]] = result.get("targetInfos", [])  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-    page_ids = [str(info["targetId"]) for info in target_infos if info.get("type") == "page"]
+    # `open_cdp` goes through the namespacing `/cdp/{browser_id}` proxy, but this endpoint's ids
+    # are already scoped by the `{browser_id}` in its own path and feed public identifiers (dpage
+    # sign-in ids, the sibling /html and /navigate routes). Strip so the contract stays raw.
+    page_ids = [
+        strip_browser_id_from_target_id(str(info["targetId"]))
+        for info in target_infos
+        if info.get("type") == "page"
+    ]
     return JSONResponse(page_ids)
 
 

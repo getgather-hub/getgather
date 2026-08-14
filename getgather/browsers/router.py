@@ -19,6 +19,10 @@ from getgather.browsers.backend import (
     create_backend,
     new_browser_id,
 )
+from getgather.browsers.target_ids import (
+    prepend_browser_id_to_target_id,
+    strip_browser_id_from_target_id,
+)
 from getgather.cdp_client import CDPClient, open_cdp_url
 from getgather.config import settings
 
@@ -112,18 +116,6 @@ async def find_browser_id(page_id: str) -> str | None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     return None
-
-
-def strip_browser_id_from_target_id(target_id: str) -> str:
-    if "@" not in target_id:
-        return target_id
-    return target_id.split("@", 1)[1]
-
-
-def prepend_browser_id_to_target_id(target_id: str, browser_id: str) -> str:
-    if "@" in target_id:
-        return target_id  # already namespaced; re-prefixing would break the round trip back
-    return browser_id + "@" + target_id
 
 
 def _rewrite_target_ids(node: Any, rewrite: Callable[[str], str]) -> None:

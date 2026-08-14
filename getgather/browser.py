@@ -22,6 +22,7 @@ from zendriver.core.config import Config
 from zendriver.core.connection import Connection, ProtocolException
 
 from getgather.browsers.fleet_browsers import build_chromefleet_headers, call_chromefleet_api
+from getgather.browsers.target_ids import strip_browser_id_from_target_id
 from getgather.config import FRIENDLY_CHARS, settings
 
 _ws_extra_headers_var: ContextVar[dict[str, str] | None] = ContextVar(
@@ -193,8 +194,12 @@ def find_browser_tab(browser: zd.Browser, target_id: str) -> zd.Tab | None:
     ``_handle_target_update`` does for newly created targets) and replace it in
     ``browser.targets`` so subsequent lookups return the ``Tab`` as well.
     """
+    wanted = strip_browser_id_from_target_id(str(target_id))
     for idx, target in enumerate(browser.targets):
-        if target.target_id != target_id:
+        # zendriver populates `targets` from `Target.getTargets` over the namespacing
+        # `/cdp/{browser_id}` proxy, so its ids carry a `<browser_id>@` prefix while callers
+        # (dpage signin ids, the pages API) hold raw ones. Compare on the stripped form.
+        if strip_browser_id_from_target_id(str(target.target_id)) != wanted:
             continue
         if isinstance(target, zd.Tab):
             return target
@@ -369,7 +374,7 @@ async def safe_close_page(page: zd.Tab) -> None:
         target = getattr(page, "target", None)
         raw_target_id = getattr(target, "target_id", None) or getattr(page, "target_id", None)
         normalized_target_id = (
-            zd.cdp.target.TargetID(raw_target_id.split("@", 1)[-1])
+            zd.cdp.target.TargetID(strip_browser_id_from_target_id(raw_target_id))
             if isinstance(raw_target_id, str)
             else None
         )
