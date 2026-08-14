@@ -14,6 +14,7 @@ from daytona import (
 )
 from fastapi import WebSocket
 from loguru import logger
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
@@ -384,12 +385,20 @@ class DaytonaBackend:
         # boot (chrome-live). Driven by the per-request `browser_type` (x-browser-type header); Chrome
         # is the default. Only set the env for a non-Chrome pick: Chrome is the snapshot default, so
         # a None env_vars keeps the create call identical to a Chrome-only snapshot (older Daytona
-        # backends reject env_vars they don't expect).
-        env_vars = (
-            {ACTIVE_BROWSER_ENV: browser_type}
-            if browser_type and browser_type != "chrome"
-            else None
-        )
+        # backends reject env_vars they don't expect) — unless Logfire/browser-trace needs env too.
+        sandbox_env: dict[str, str] = {}
+        if browser_type and browser_type != "chrome":
+            sandbox_env[ACTIVE_BROWSER_ENV] = browser_type
+        # chrome-live browser-trace + tinyproxy-log read these (see spiteful-hedgehog browser-trace).
+        if settings.LOGFIRE_TOKEN:
+            sandbox_env["LOGFIRE_TOKEN"] = settings.LOGFIRE_TOKEN
+            sandbox_env["ENVIRONMENT"] = settings.ENVIRONMENT
+            sandbox_env["LOG_LEVEL"] = settings.LOG_LEVEL
+            carrier: dict[str, str] = {}
+            TraceContextTextMapPropagator().inject(carrier)
+            if traceparent := carrier.get("traceparent"):
+                sandbox_env["LOGFIRE_TRACEPARENT"] = traceparent
+        env_vars = sandbox_env or None
         params = CreateSandboxFromSnapshotParams(
             snapshot=self.snapshot,
             name=name,
