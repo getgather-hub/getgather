@@ -5,6 +5,7 @@ import urllib.parse
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from glob import glob
 from pathlib import Path
 from typing import Any, Callable, Coroutine, cast
@@ -289,6 +290,7 @@ async def get_error(distilled: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=8)
 def load_distillation_patterns(path: str) -> list[Pattern]:
     patterns: list[Pattern] = []
     for name in glob(path, recursive=True):
