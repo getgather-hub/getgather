@@ -206,6 +206,7 @@ async def _capture_create_params(monkeypatch: MonkeyPatch, backend: DaytonaBacke
 async def test_create_sets_active_browser_env_for_cloak(monkeypatch: MonkeyPatch) -> None:
     # browser_type="cloak" (x-browser-type header) selects CloakBrowser via the ACTIVE_BROWSER env.
     backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "LOGFIRE_TOKEN", "")
     captured = await _capture_create_params(monkeypatch, backend)
     await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
     assert captured[0].env_vars == {"ACTIVE_BROWSER": "cloak"}
@@ -214,8 +215,9 @@ async def test_create_sets_active_browser_env_for_cloak(monkeypatch: MonkeyPatch
 @pytest.mark.asyncio
 async def test_create_omits_env_for_chrome(monkeypatch: MonkeyPatch) -> None:
     # Chrome is the default: send no env_vars so the create call is identical to a Chrome-only
-    # snapshot (older Daytona backends reject unexpected env_vars).
+    # snapshot (older Daytona backends reject unexpected env_vars), when Logfire is unset.
     backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "LOGFIRE_TOKEN", "")
     captured = await _capture_create_params(monkeypatch, backend)
     await backend._create("chromium-test", "chrome")  # pyright: ignore[reportPrivateUsage]
     assert captured[0].env_vars is None
@@ -223,11 +225,43 @@ async def test_create_omits_env_for_chrome(monkeypatch: MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_create_omits_env_when_browser_type_none(monkeypatch: MonkeyPatch) -> None:
-    # No x-browser-type header -> browser_type None -> default Chrome, no env_vars.
+    # No x-browser-type header -> browser_type None -> default Chrome, no env_vars (no Logfire).
     backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "LOGFIRE_TOKEN", "")
     captured = await _capture_create_params(monkeypatch, backend)
     await backend._create("chromium-test", None)  # pyright: ignore[reportPrivateUsage]
     assert captured[0].env_vars is None
+
+
+@pytest.mark.asyncio
+async def test_create_passes_logfire_env_for_chrome(monkeypatch: MonkeyPatch) -> None:
+    # chrome-live browser-trace needs LOGFIRE_TOKEN even for the default Chrome browser.
+    backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "LOGFIRE_TOKEN", "lf_test_token")
+    monkeypatch.setattr(daytona_browsers.settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(daytona_browsers.settings, "LOG_LEVEL", "DEBUG")
+    captured = await _capture_create_params(monkeypatch, backend)
+    await backend._create("chromium-test", "chrome")  # pyright: ignore[reportPrivateUsage]
+    env = captured[0].env_vars
+    assert env["LOGFIRE_TOKEN"] == "lf_test_token"
+    assert env["ENVIRONMENT"] == "test"
+    assert env["LOG_LEVEL"] == "DEBUG"
+    assert "ACTIVE_BROWSER" not in env
+
+
+@pytest.mark.asyncio
+async def test_create_passes_logfire_env_with_cloak(monkeypatch: MonkeyPatch) -> None:
+    backend = _backend()
+    monkeypatch.setattr(daytona_browsers.settings, "LOGFIRE_TOKEN", "lf_test_token")
+    monkeypatch.setattr(daytona_browsers.settings, "ENVIRONMENT", "prod")
+    monkeypatch.setattr(daytona_browsers.settings, "LOG_LEVEL", "INFO")
+    captured = await _capture_create_params(monkeypatch, backend)
+    await backend._create("chromium-test", "cloak")  # pyright: ignore[reportPrivateUsage]
+    env = captured[0].env_vars
+    assert env["ACTIVE_BROWSER"] == "cloak"
+    assert env["LOGFIRE_TOKEN"] == "lf_test_token"
+    assert env["ENVIRONMENT"] == "prod"
+    assert env["LOG_LEVEL"] == "INFO"
 
 
 def test_create_browser_auto_uses_backend_default_when_env_unset(monkeypatch: MonkeyPatch) -> None:
