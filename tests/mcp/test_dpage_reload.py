@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup, Tag
 
-from getgather.mcp.dpage import _pattern_reload_max
+from getgather.mcp.dpage import _pattern_reload_max  # pyright: ignore[reportPrivateUsage]
 
 
 def test_pattern_reload_max_default() -> None:
