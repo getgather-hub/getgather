@@ -40,7 +40,11 @@ async def list_pages(browser_id: str) -> JSONResponse:
         await client.aclose()
 
     target_infos: list[dict[str, Any]] = result.get("targetInfos", [])  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-    page_ids = [str(info["targetId"]) for info in target_infos if info.get("type") == "page"]
+    page_ids = [
+        strip_browser_id_from_target_id(str(info["targetId"]))
+        for info in target_infos
+        if info.get("type") == "page"
+    ]
     return JSONResponse(page_ids)
 
 

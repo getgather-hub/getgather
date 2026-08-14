@@ -143,10 +143,15 @@ class CDPClient:
 
     async def find_page_target(self, page_id: str) -> dict[str, Any]:
         """Return the TargetInfo dict for the given page_id, or raise PageNotFoundError."""
+        # Deferred import: getgather.browsers.router imports this module at load time, so a
+        # top-level import here would be circular.
+        from getgather.browsers.router import strip_browser_id_from_target_id
+
         result = await self.send("Target.getTargets")
         target_infos: list[dict[str, Any]] = result.get("targetInfos", [])  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
         for info in target_infos:
-            if info.get("targetId") == page_id and info.get("type") == "page":
+            info_target_id = strip_browser_id_from_target_id(str(info.get("targetId", "")))
+            if info_target_id == page_id and info.get("type") == "page":
                 return info
         raise PageNotFoundError(f"Page {page_id} not found in browser")
 
