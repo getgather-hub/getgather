@@ -19,18 +19,20 @@ dependencies = [
   "beautifulsoup4>=4.13.4",
   "fastmcp>=3.0.0,<4",
   "logfire[fastapi,httpx]>=4.13.2",
-  "zendriver>=0.14.2",
+  # Capped: zendriver 0.15.x and daytona 0.185+ break the browser API (CDP /json/version
+  # times out, GET /api/v1/browsers 500s). Lift once the code is ported to the newer SDKs.
+  "zendriver>=0.14.2,<0.15",
   "loguru>=0.7.3",
   "httpx-retries>=0.4.6",
   "websockets>=15.0.1",
   "async-lru>=2.0",
   "geoip2>=5.2.0",
-  "daytona>=0.183.0",
+  "daytona>=0.183.0,<0.185",
 ]
 
 [project.optional-dependencies]
 # Daytona backend (BROWSER_BACKEND=daytona). Optional so podman-only installs stay unchanged.
-daytona = ["daytona>=0.183.0"]
+daytona = ["daytona>=0.183.0,<0.185"]
 
 [dependency-groups]
 dev = [

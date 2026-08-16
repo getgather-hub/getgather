@@ -2474,8 +2474,8 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "async-lru", specifier = ">=2.0" },
     { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "daytona", specifier = ">=0.183.0" },
-    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.183.0" },
+    { name = "daytona", specifier = ">=0.183.0,<0.185" },
+    { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.183.0,<0.185" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "fastmcp", specifier = ">=3.0.0,<4" },
     { name = "geoip2", specifier = ">=5.2.0" },
@@ -2491,7 +2491,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.29.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.2" },
     { name = "websockets", specifier = ">=15.0.1" },
-    { name = "zendriver", specifier = ">=0.14.2" },
+    { name = "zendriver", specifier = ">=0.14.2,<0.15" },
 ]
 provides-extras = ["daytona"]
 
