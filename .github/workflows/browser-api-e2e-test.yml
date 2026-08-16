@@ -120,7 +120,15 @@ jobs:
       - name: Execute the wheel
         # uvx resolves fresh from PyPI and never reads uv.lock — this leg deliberately tests what
         # `uvx remotebrowser` gives a real user, so the version caps live in pyproject.toml.
-        run: uvx ./dist/*.whl &
+        # The daytona SDK is an extra (lazy-imported), so request it via the wheel's own extra
+        # rather than `--with daytona`, which would resolve the SDK uncapped.
+        run: |
+          wheel=$(ls dist/*.whl)
+          if [ "${{ matrix.browser_backend }}" = daytona ]; then
+            uvx --from "remotebrowser[daytona] @ file://$PWD/$wheel" remotebrowser &
+          else
+            uvx "$wheel" &
+          fi
 
       - name: Run the health check validation
         run: while ! curl -s 'http://localhost:23456/health' | grep 'OK'; do sleep 1; done

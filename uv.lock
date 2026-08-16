@@ -2428,7 +2428,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "async-lru" },
     { name = "beautifulsoup4" },
-    { name = "daytona" },
     { name = "fastapi" },
     { name = "fastmcp" },
     { name = "geoip2" },
@@ -2455,6 +2454,7 @@ daytona = [
 [package.dev-dependencies]
 dev = [
     { name = "assertpy" },
+    { name = "daytona" },
     { name = "faker" },
     { name = "nanoid" },
     { name = "pyinstaller" },
@@ -2474,7 +2474,6 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "async-lru", specifier = ">=2.0" },
     { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "daytona", specifier = ">=0.183.0,<0.185" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.183.0,<0.185" },
     { name = "fastapi", specifier = ">=0.115.12" },
     { name = "fastmcp", specifier = ">=3.0.0,<4" },
@@ -2498,6 +2497,7 @@ provides-extras = ["daytona"]
 [package.metadata.requires-dev]
 dev = [
     { name = "assertpy", specifier = ">=1.1" },
+    { name = "daytona", specifier = ">=0.183.0,<0.185" },
     { name = "faker", specifier = ">=33.3.0" },
     { name = "nanoid", specifier = ">=2.0.0" },
     { name = "pyinstaller", specifier = ">=6.19.0" },
