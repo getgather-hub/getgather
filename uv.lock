@@ -2454,7 +2454,6 @@ daytona = [
 [package.dev-dependencies]
 dev = [
     { name = "assertpy" },
-    { name = "daytona" },
     { name = "faker" },
     { name = "nanoid" },
     { name = "pyinstaller" },
@@ -2497,7 +2496,6 @@ provides-extras = ["daytona"]
 [package.metadata.requires-dev]
 dev = [
     { name = "assertpy", specifier = ">=1.1" },
-    { name = "daytona", specifier = ">=0.183.0,<0.185" },
     { name = "faker", specifier = ">=33.3.0" },
     { name = "nanoid", specifier = ">=2.0.0" },
     { name = "pyinstaller", specifier = ">=6.19.0" },

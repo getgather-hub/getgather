@@ -35,9 +35,6 @@ daytona = ["daytona>=0.183.0,<0.185"]
 
 [dependency-groups]
 dev = [
-  # tests/test_daytona_browsers.py imports the backend module unguarded, and pyright strict checks
-  # it, so the SDK must be present for dev even though runtime imports it lazily.
-  "daytona>=0.183.0,<0.185",
   "assertpy>=1.1",
   "faker>=33.3.0",
   "nanoid>=2.0.0",
