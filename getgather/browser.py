@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 from urllib.parse import urlparse
 
-import asyncio_atexit
 import logfire
 import sentry_sdk
 import websockets
@@ -16,7 +15,6 @@ import zendriver as zd
 from loguru import logger
 from nanoid import generate
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from zendriver.core import util
 from zendriver.core._contradict import ContraDict
 from zendriver.core.config import Config
 from zendriver.core.connection import Connection, ProtocolException
@@ -165,15 +163,6 @@ async def _create_browser_from_cdp_websocket(
                 f"{settings.CHROMEFLEET_CDP_HANDSHAKE_TIMEOUT_SECONDS:g}s: "
                 f"browser_id={browser_id}"
             )
-    util.get_registered_instances().add(instance)
-
-    async def browser_atexit() -> None:
-        if not instance.stopped:
-            await instance.stop()
-        await instance._cleanup_temporary_profile()  # type: ignore[reportPrivateUsage]
-
-    asyncio_atexit.register(browser_atexit)  # type: ignore[reportUnknownMemberType]
-
     instance.id = browser_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     return instance
 
