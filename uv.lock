@@ -2489,7 +2489,7 @@ requires-dist = [
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.29.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.2" },
     { name = "websockets", specifier = ">=15.0.1" },
-    { name = "zendriver", specifier = ">=0.14.2,<0.15" },
+    { name = "zendriver", specifier = ">=0.14.2" },
 ]
 provides-extras = ["daytona"]
 
