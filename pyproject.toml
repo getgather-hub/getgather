@@ -29,7 +29,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Daytona backend (BROWSER_BACKEND=daytona). Optional so podman-only installs stay unchanged.
-daytona = ["daytona>=0.183.0"]
+daytona = ["daytona>=0.183.0,<0.185"]
 
 [dependency-groups]
 dev = [
