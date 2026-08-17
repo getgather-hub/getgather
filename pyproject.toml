@@ -25,12 +25,11 @@ dependencies = [
   "websockets>=15.0.1",
   "async-lru>=2.0",
   "geoip2>=5.2.0",
-  "daytona>=0.183.0",
 ]
 
 [project.optional-dependencies]
 # Daytona backend (BROWSER_BACKEND=daytona). Optional so podman-only installs stay unchanged.
-daytona = ["daytona>=0.183.0"]
+daytona = ["daytona>=0.183.0,<0.185"]
 
 [dependency-groups]
 dev = [
