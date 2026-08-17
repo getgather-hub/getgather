@@ -42,10 +42,10 @@ jobs:
           CONTAINER_HOST: unix:///run/podman/podman.sock
         run: podman --remote run --rm quay.io/podman/hello
 
-      - name: Pull Chromium container image
+      - name: Pull Chrome container image
         env:
           CONTAINER_HOST: unix:///run/podman/podman.sock
-        run: podman --remote pull ghcr.io/remotebrowser/chromium-live
+        run: podman --remote pull ghcr.io/remotebrowser/chrome-live
 
       - uses: remotebrowser/shared-github-actions/container-health-check@v1
         with:
@@ -64,7 +64,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Prepare the browser container image
-        run: podman pull ghcr.io/remotebrowser/chromium-live
+        run: podman pull ghcr.io/remotebrowser/chrome-live
 
       - uses: actions/checkout@v6
 

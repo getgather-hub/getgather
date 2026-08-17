@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Prepare the browser container image
-        run: podman pull ghcr.io/remotebrowser/chromium-live
+        run: podman pull ghcr.io/remotebrowser/chrome-live
 
       - name: Checkout code
         uses: actions/checkout@v6

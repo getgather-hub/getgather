@@ -33,7 +33,7 @@ class BrowserSettings(BaseSettings):
     BROWSER_BACKEND: BrowserBackendName = "podman"
 
     # Podman backend
-    CONTAINER_IMAGE: str = "ghcr.io/remotebrowser/chromium-live"
+    CONTAINER_IMAGE: str = "ghcr.io/remotebrowser/chrome-live"
     CONTAINER_HOST: str = ""
     MAX_IDLE_MINUTES: int = 15
 

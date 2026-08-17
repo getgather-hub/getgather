@@ -81,7 +81,7 @@ async def get_host_port(container_name: str, container_port: int) -> int | None:
 
 
 async def launch_container(image_name: str, container_name: str) -> str:
-    logger.info(f"Launching Chromium container as {container_name}...")
+    logger.info(f"Launching Chrome container as {container_name}...")
     cmd = [
         "run",
         "-d",
@@ -111,9 +111,9 @@ async def launch_container(image_name: str, container_name: str) -> str:
                 f"Container started: name={container_name} id={container_id} cdp_port={cdp_port} vnc_port={vnc_port}"
             )
             return container_id
-        raise Exception(f"Unable to launch Chromium for {container_name}")
+        raise Exception(f"Unable to launch Chrome for {container_name}")
     except subprocess.CalledProcessError as e:
-        raise Exception(f"Unable to launch Chromium for {container_name}: {e}")
+        raise Exception(f"Unable to launch Chrome for {container_name}: {e}")
 
 
 async def container_exists(container_name: str) -> bool:
@@ -138,7 +138,7 @@ async def container_is_running(container_name: str) -> bool:
 
 
 async def kill_container(container_name: str) -> None:
-    logger.info(f"Killing Chromium container {container_name}...")
+    logger.info(f"Killing Chrome container {container_name}...")
     try:
         result = await run_podman(["kill", container_name])
         if result.returncode == 0 and result.stdout:
