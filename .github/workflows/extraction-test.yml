@@ -120,21 +120,13 @@ jobs:
       - name: List the wheel contents
         run: unzip -l dist/*.whl
 
-      - name: Export uv.lock as constraints
-        # uvx resolves the wheel's dependencies fresh from PyPI and never reads uv.lock, so without
-        # this the wheel legs run a different dependency set than every other job — daytona 0.204.0
-        # and zendriver 0.15.5 rather than the locked 0.184.0 and 0.14.2.
-        run: uv export --format requirements-txt --no-hashes --no-dev --no-emit-project --extra daytona -o /tmp/constraints.txt
-
       - name: Execute the wheel
-        # The daytona backend needs the optional SDK (lazy-imported); add it for that variant only.
-        env:
-          UV_CONSTRAINT: /tmp/constraints.txt
         run: |
+          wheel=$(ls dist/*.whl)
           if [ "${{ matrix.browser_backend }}" = daytona ]; then
-            uvx --with daytona ./dist/*.whl &
+            uvx --from "remotebrowser[daytona] @ file://$PWD/$wheel" remotebrowser &
           else
-            uvx ./dist/*.whl &
+            uvx "$wheel" &
           fi
 
       - name: Run the health check validation
