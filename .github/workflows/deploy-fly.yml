@@ -3,6 +3,10 @@ name: Deploy to Fly.io
 on:
   push:
     branches: [main]
+  # TEMPORARY (revert before merge): exercise the BROWSER_BACKEND build-arg on remotebrowser-dev
+  # from this branch's PR. Gated on head_ref below so no other PR deploys anything.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       demo:
@@ -28,6 +32,7 @@ on:
 
 jobs:
   prepare-matrix:
+    if: github.event_name != 'pull_request' || github.head_ref == 'test/deploy-fly-backend-build-arg'
     runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.pm.outputs.matrix }}
@@ -40,11 +45,14 @@ jobs:
             { "env": "dev",         "config": "dev",         "app_name": "remotebrowser-dev" }
             { "env": "daytona",     "config": "daytona",     "app_name": "remotebrowser-daytona" }
             { "env": "browserbase", "config": "browserbase", "app_name": "remotebrowser-browserbase" }
+          # An empty selection list means "deploy everything", so the pull_request case must name
+          # dev explicitly — otherwise a PR would deploy demo and the rest too.
           selections: |
-            ${{ inputs.demo        && 'demo'        || '' }}
-            ${{ inputs.dev         && 'dev'         || '' }}
-            ${{ inputs.daytona     && 'daytona'     || '' }}
-            ${{ inputs.browserbase && 'browserbase' || '' }}
+            ${{ github.event_name == 'pull_request' && 'dev' || '' }}
+            ${{ github.event_name != 'pull_request' && inputs.demo        && 'demo'        || '' }}
+            ${{ github.event_name != 'pull_request' && inputs.dev         && 'dev'         || '' }}
+            ${{ github.event_name != 'pull_request' && inputs.daytona     && 'daytona'     || '' }}
+            ${{ github.event_name != 'pull_request' && inputs.browserbase && 'browserbase' || '' }}
           key-field: env
 
   deploy:
@@ -65,4 +73,4 @@ jobs:
           doppler-project: remotebrowser
           doppler-config: ${{ matrix.config }}
           app-name: ${{ matrix.app_name }}
-          build-args: ${{ matrix.env == 'daytona' && 'BROWSER_BACKEND=daytona' || '' }}
+          build-args: BROWSER_BACKEND=$BROWSER_BACKEND
