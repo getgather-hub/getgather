@@ -65,4 +65,4 @@ jobs:
           doppler-project: remotebrowser
           doppler-config: ${{ matrix.config }}
           app-name: ${{ matrix.app_name }}
-          build-args: ${{ matrix.env == 'daytona' && 'BROWSER_BACKEND=daytona' || '' }}
+          build-args: BROWSER_BACKEND=$BROWSER_BACKEND
