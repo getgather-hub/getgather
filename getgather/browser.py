@@ -210,7 +210,7 @@ async def get_remote_browser_cdp_url(browser_id: str) -> str:
 async def get_remote_browser(browser_id: str) -> zd.Browser | None:
     logger.debug(f"Finding the ChromeFleet browser: {browser_id}")
     try:
-        await call_chromefleet_api("GET", browser_id)
+        await call_chromefleet_api("GET", browser_id, timeout=30.0)
     except Exception:
         return None
 
