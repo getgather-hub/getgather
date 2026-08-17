@@ -65,8 +65,4 @@ jobs:
           doppler-project: remotebrowser
           doppler-config: ${{ matrix.config }}
           app-name: ${{ matrix.app_name }}
-          # Resolved from the app's Doppler config by the action, so the value that selects the
-          # backend at runtime is the same one that decides whether its SDK is installed into the
-          # image (see Dockerfile ARG BROWSER_BACKEND). Every config must define BROWSER_BACKEND
-          # or the deploy fails.
           build-args: BROWSER_BACKEND=$BROWSER_BACKEND
