@@ -111,6 +111,8 @@ class FleetBackend:
         browser_type: str | None,
     ) -> dict[str, Any]:
         headers = {"x-origin-ip": origin_ip} if origin_ip else {}
+        if target_domain:
+            headers["x-target-domains"] = target_domain
         if browser_type:
             headers["x-browser-type"] = browser_type
         response = _require(await call_chromefleet_api("POST", browser_id, headers=headers))
@@ -166,9 +168,10 @@ class FleetBackend:
         # from CHROMEFLEET_URL + browser_id, so this never returns None — no retry needed.
         return f"{self.cdp_websocket_base()}/cdp/{browser_id}"
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The external fleet's /cdp proxy already namespaces target ids by browser_id; the
         # router patching here would double-prefix them, so opt out.
+        del browser_id
         return False
 
     async def get_devtools_websocket_remote_url(

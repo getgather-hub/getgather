@@ -18,6 +18,7 @@ from getgather.browsers.backend import (
     create_backend,
     new_browser_id,
 )
+from getgather.browsers.provider_race import ProviderRaceBackend
 from getgather.cdp_client import CDPClient, open_cdp_url
 from getgather.config import settings
 
@@ -231,6 +232,14 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
         origin_ip = request.headers.get("x-origin-ip")
         target_domain = request.headers.get("x-target-domains")
         browser_type = request.headers.get("x-browser-type")
+        if isinstance(backend, ProviderRaceBackend):
+            browser_id = new_browser_id()
+            await backend.create_raced_browser(browser_id, origin_ip, target_domain, browser_type)
+            cdp_url = str(request.url_for("cdp_browser_websocket_proxy", browser_id=browser_id))
+            logger.info(f"Browser {browser_id} is CDP-ready.")
+            # Preserve the existing create contract. cdp_url is additive; CDP readiness is an
+            # internal guarantee rather than a new externally visible status value.
+            return {"browser_id": browser_id, "cdp_url": cdp_url, "status": "created"}
         explicit = settings.BROWSER_BEST_OF_N
         n = max(1, explicit if explicit is not None else backend.default_best_of_n)
         if n == 1:
@@ -361,7 +370,9 @@ async def cdp_browser_websocket_proxy(client_ws: WebSocket, browser_id: str) -> 
     # already namespaces target ids (Fleet's external /cdp proxy) — in which case we do not patch
     # again (would double-prefix browser_id).
     logger.debug(f"[CDP] Entered cdp_browser_websocket_proxy for browser_id={browser_id}")
-    await relay_browser_cdp(client_ws, browser_id, patch=backend.cdp_targets_need_namespacing())
+    await relay_browser_cdp(
+        client_ws, browser_id, patch=backend.cdp_targets_need_namespacing(browser_id)
+    )
     logger.debug("[CDP] cdp_browser_websocket_proxy exiting")
 
 
@@ -457,7 +468,10 @@ async def cdp_devtools_websocket_proxy(client_ws: WebSocket, path: str) -> None:
     # we do not patch again (would double-prefix browser_id).
     logger.info(f"[CDP] Connecting to {remote_url}")
     await websocket_proxy(
-        client_ws, remote_url, browser_id, patch=backend.cdp_targets_need_namespacing()
+        client_ws,
+        remote_url,
+        browser_id,
+        patch=backend.cdp_targets_need_namespacing(browser_id),
     )
     logger.debug("[CDP] cdp_devtools_websocket_proxy exiting")
 

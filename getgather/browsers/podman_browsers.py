@@ -437,9 +437,10 @@ class PodmanBackend:
         cdp_base_url = await self.get_cdp_base_url(browser_id)
         return await get_browser_websocket_debugger_url(cdp_base_url)
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The per-browser socket reports raw target ids; the router namespaces them by browser_id
         # so the devtools route can route /devtools/{browser_id@page_id} back to this browser.
+        del browser_id
         return True
 
     async def get_devtools_websocket_remote_url(

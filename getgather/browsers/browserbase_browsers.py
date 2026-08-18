@@ -316,9 +316,10 @@ class BrowserbaseBackend:
         # discovery step. None for an unknown / already-released session.
         return self._sessions.get(browser_id)
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The connectUrl is a single browser's socket; the router namespaces its target ids by
         # browser_id so the devtools route can route /devtools/{browser_id@page_id} back here.
+        del browser_id
         return True
 
     async def get_devtools_websocket_remote_url(

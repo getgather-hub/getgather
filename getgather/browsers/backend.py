@@ -245,7 +245,7 @@ class Backend(Protocol):
         Fleet, the per-browser /json/version discovery for Podman/Daytona). Returns None when
         the URL can't (yet) be resolved."""
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         """Whether `websocket_proxy` should rewrite target ids to namespace them by `browser_id`
         when relaying to this backend's URL. True for backends that hand back a single browser's
         raw CDP socket (Podman / Daytona); False for the Fleet relay, whose /cdp proxy already
@@ -275,6 +275,15 @@ class Backend(Protocol):
 
 
 def create_backend() -> Backend:
+    backend = _create_single_backend()
+    if settings.BROWSER_PROVIDER_RACE:
+        from getgather.browsers.provider_race import create_provider_race_backend
+
+        return create_provider_race_backend(backend)
+    return backend
+
+
+def _create_single_backend() -> Backend:
     if settings.CHROMEFLEET_URL:
         from getgather.browsers.fleet_browsers import FleetBackend
 

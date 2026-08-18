@@ -65,6 +65,11 @@ class BrowserSettings(BaseSettings):
     # (see `Backend.default_best_of_n`): Podman=5, Daytona=3, Fleet=1.
     BROWSER_BEST_OF_N: int | None = None
 
+    # Experimental best-of-providers browser creation. When enabled, the server-assigned create
+    # endpoint races every configured remote provider (Fly/Chrome Fleet, Daytona, Browserbase),
+    # returns a provider-neutral local /cdp URL, and keeps an in-memory route to the winner.
+    BROWSER_PROVIDER_RACE: bool = False
+
     @property
     def effective_chromefleet_url(self) -> str:
         """Returns CHROMEFLEET_URL if set, otherwise falls back to the local backend."""
