@@ -261,3 +261,51 @@ def test_find_page_target_matches_namespaced_ids() -> None:
 
     with pytest.raises(PageNotFoundError):
         asyncio.run(namespaced.find_page_target("OTHER"))
+
+
+def test_runtime_evaluate_result_target_id_passes_through() -> None:
+    """A `targetId` key inside a `Runtime.evaluate` result is application data, not a CDP target
+    id — `window.ytInitialData` and friends come back as whole nested blobs. Rewriting it
+    corrupts scraped output silently, with no error to notice."""
+    message = json.dumps({
+        "id": 7,
+        "result": {"result": {"type": "object", "value": {"targetId": "order-123", "price": 9.99}}},
+    })
+    assert browsers_router.patch_cdp_target_inbound(message, "BROWSER") == message
+    assert browsers_router.patch_cdp_target_outbound(message, "BROWSER") == message
+
+
+def test_runtime_call_function_on_argument_target_id_passes_through() -> None:
+    """Outbound is the more damaging direction: the strip truncates at the first `@`, so an
+    `@`-bearing application value under a `targetId` key would lose everything before it."""
+    message = json.dumps({
+        "id": 8,
+        "method": "Runtime.callFunctionOn",
+        "params": {
+            "functionDeclaration": "x=>x",
+            "arguments": [{"value": {"targetId": "user@domain"}}],
+        },
+    })
+    assert browsers_router.patch_cdp_target_outbound(message, "BROWSER") == message
+    assert browsers_router.patch_cdp_target_inbound(message, "BROWSER") == message
+
+
+def test_get_target_info_result_is_namespaced() -> None:
+    """`result.targetInfo.targetId` — the shape `Target.getTargetInfo` answers with."""
+    message = json.dumps({"id": 4, "result": {"targetInfo": {"targetId": "PAGE1", "type": "page"}}})
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["result"]["targetInfo"]["targetId"] == "Byr3kieca@PAGE1"
+
+
+def test_create_target_result_is_namespaced() -> None:
+    """`result.targetId` — the shape `Target.createTarget` answers with."""
+    message = json.dumps({"id": 5, "result": {"targetId": "PAGE1"}})
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["result"]["targetId"] == "Byr3kieca@PAGE1"
+
+
+def test_target_destroyed_event_params_target_id_is_namespaced() -> None:
+    """`params.targetId` on an event, not just on a request."""
+    message = json.dumps({"method": "Target.targetDestroyed", "params": {"targetId": "PAGE1"}})
+    patched = json.loads(browsers_router.patch_cdp_target_inbound(message, "Byr3kieca"))
+    assert patched["params"]["targetId"] == "Byr3kieca@PAGE1"

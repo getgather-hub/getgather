@@ -2,7 +2,7 @@ import asyncio
 import html
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import websockets
@@ -125,25 +125,65 @@ async def find_browser_id(page_id: str) -> str | None:
     return None
 
 
-def _rewrite_target_ids(node: Any, rewrite: Callable[[str], str]) -> None:
-    """Apply `rewrite` to every `targetId` string anywhere in a decoded CDP message, in place.
+def _as_dict(value: object) -> dict[str, Any] | None:
+    """Narrow an arbitrary decoded-JSON node to a dict, or None if it is anything else."""
+    return cast(dict[str, Any], value) if isinstance(value, dict) else None
 
-    Walking the whole tree rather than matching known message shapes is deliberate: `targetId`
-    turns up nested (`params.targetInfo.targetId` on `Target.targetCreated` /
-    `Target.attachedToTarget` / `Target.targetInfoChanged`) and inside lists
-    (`result.targetInfos[]` on `Target.getTargets`). An allowlist of shapes silently misses the
-    rest, and a missed `targetInfos[]` is what makes zendriver's `update_targets` build raw
-    `/devtools/page/<id>` URLs — which then cost a full-fleet scan in `find_browser_id`.
+
+def _rewrite_target_id_field(container: object, rewrite: Callable[[str], str]) -> None:
+    """Rewrite `container["targetId"]` in place, if `container` is a dict holding a string there."""
+    fields = _as_dict(container)
+    if fields is None:
+        return
+    target_id = fields.get("targetId")
+    if isinstance(target_id, str):
+        fields["targetId"] = rewrite(target_id)
+
+
+def _rewrite_target_ids(data: object, rewrite: Callable[[str], str]) -> None:
+    """Rewrite every target id the CDP Target/Browser protocol owns, in place.
+
+    Only these five locations are touched, which is the complete set across `cdp/target.py` and
+    `cdp/browser.py`:
+
+    - `params.targetId` — attach/close/activate/getTargetInfo/sendMessageToTarget requests,
+      `Browser.getWindowForTarget`, and the targetDestroyed / targetCrashed events
+    - `params.targetInfo.targetId` — targetCreated / attachedToTarget / targetInfoChanged
+    - `result.targetId` — createTarget
+    - `result.targetInfo.targetId` — getTargetInfo
+    - `result.targetInfos[*].targetId` — getTargets
+
+    Deliberately NOT a walk over the whole message. `targetId` is not a reserved word, so a
+    recursive rewrite also hits application data that merely happens to use that key: a
+    `Runtime.evaluate` result at `result.result.value.targetId` (e.g. the entire
+    `window.ytInitialData` blob) or a `Runtime.callFunctionOn` argument at
+    `params.arguments[*].value.targetId`. Rewriting those corrupts scraped data silently, and
+    the outbound strip is worse than the inbound prefix because it truncates at the first `@`.
+    Every protocol-owned path is shallow, so bounding to them costs no coverage.
+
+    Gating on shape rather than on `method` is also deliberate: a CDP *response* is
+    `{"id": N, "result": {...}}` with no method field, so a method allowlist cannot classify one
+    without stateful id->method tracking. That is exactly the trap the previous version fell
+    into — it matched on `method`, then fell back to a bare `result.targetId` check, which is
+    how `result.targetInfos[]` went unpatched and cost a full-fleet scan in `find_browser_id`.
     """
-    if isinstance(node, dict):
-        for key, value in node.items():  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            if key == "targetId" and isinstance(value, str):
-                node[key] = rewrite(value)
-            else:
-                _rewrite_target_ids(value, rewrite)
-    elif isinstance(node, list):
-        for item in node:  # pyright: ignore[reportUnknownVariableType]
-            _rewrite_target_ids(item, rewrite)
+    message = _as_dict(data)
+    if message is None:
+        return
+
+    params = _as_dict(message.get("params"))
+    if params is not None:
+        _rewrite_target_id_field(params, rewrite)
+        _rewrite_target_id_field(params.get("targetInfo"), rewrite)
+
+    result = _as_dict(message.get("result"))
+    if result is not None:
+        _rewrite_target_id_field(result, rewrite)
+        _rewrite_target_id_field(result.get("targetInfo"), rewrite)
+        target_infos = result.get("targetInfos")
+        if isinstance(target_infos, list):
+            for info in cast(list[Any], target_infos):
+                _rewrite_target_id_field(info, rewrite)
 
 
 def _patch_cdp_target(message: str, rewrite: Callable[[str], str]) -> str:
