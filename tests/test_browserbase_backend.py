@@ -294,6 +294,28 @@ async def test_browserbase_delete_browser_swallows_404(monkeypatch: MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_browserbase_delete_browser_redacts_release_error(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "BROWSERBASE_API_KEY", "test-key")
+    _patch_cdp_wait(monkeypatch)
+    _fake_client, factory = _make_fake_client_factory(release_status=401)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    warnings: list[str] = []
+    monkeypatch.setattr("getgather.browsers.browserbase_browsers.logger.warning", warnings.append)
+
+    backend = BrowserbaseBackend()
+    await backend.create_browser("ignored", None, None, None)
+    result = await backend.delete_browser(SESSION_ID)
+
+    assert result == {"browser_id": SESSION_ID, "status": "deleted"}
+    log_text = "\n".join(warnings)
+    assert "error=RuntimeError" in log_text
+    assert "HTTP 401" not in log_text
+    assert BROWSERBASE_SESSIONS_URL not in log_text
+
+
+@pytest.mark.asyncio
 async def test_browserbase_delete_browser_for_unknown_id_clears_silently(
     monkeypatch: MonkeyPatch,
 ) -> None:

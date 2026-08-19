@@ -369,7 +369,7 @@ class BrowserbaseBackend:
                     response.raise_for_status()
             logger.info(f"Browserbase session released: id={browser_id}")
         except Exception as e:
-            logger.warning(f"Browserbase release failed for {browser_id}: {type(e).__name__}: {e}")
+            logger.warning(f"Browserbase release failed for {browser_id}: error={type(e).__name__}")
         return {"browser_id": browser_id, "status": "deleted"}
 
     async def browser_exists(self, browser_id: str) -> bool:
@@ -406,7 +406,10 @@ class BrowserbaseBackend:
                 )
                 response.raise_for_status()
             except httpx.HTTPError as e:
-                logger.warning(f"Browserbase live view lookup failed for {browser_id}: {e}")
+                logger.warning(
+                    f"Browserbase live view lookup failed for {browser_id}: "
+                    f"error={type(e).__name__}"
+                )
                 return None
         data: dict[str, Any] = response.json()
         url: Any = data.get("debuggerFullscreenUrl")  # pyright: ignore[reportUnknownMemberType]
