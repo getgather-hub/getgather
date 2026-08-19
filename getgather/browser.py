@@ -215,7 +215,7 @@ async def get_remote_browser(browser_id: str) -> zd.Browser | None:
         return None
 
     cdp_websocket_url = _setup_cdp_url(browser_id)
-    logger.debug(f"Connecting to ChromeFleet CDP at {cdp_websocket_url}")
+    logger.debug(f"Connecting to ChromeFleet CDP for browser {browser_id}")
     browser = await _create_browser_from_cdp_websocket(
         browser_id=browser_id, websocket_url=cdp_websocket_url
     )
@@ -234,7 +234,7 @@ async def create_remote_browser(
         browser_id = generate(FRIENDLY_CHARS, 6)
     logger.info(f"Connecting to ChromeFleet browser: {browser_id}")
     cdp_websocket_url = _setup_cdp_url(browser_id)
-    logger.debug(f"Connecting to ChromeFleet CDP at {cdp_websocket_url}")
+    logger.debug(f"Connecting to ChromeFleet CDP for browser {browser_id}")
     browser = await _create_browser_from_cdp_websocket(
         browser_id=browser_id, websocket_url=cdp_websocket_url, target_domain=target_domain
     )

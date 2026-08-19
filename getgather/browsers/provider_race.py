@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,8 @@ class _Candidate:
     provider: str
     backend: Backend
     provider_browser_id: str
+    create_seconds: float
+    cdp_ready_seconds: float
 
 
 class ProviderRaceBackend:
@@ -57,6 +60,8 @@ class ProviderRaceBackend:
         browser_type: str | None,
     ) -> None:
         """Create one candidate per provider and register the first CDP-ready winner."""
+        race_started = time.monotonic()
+        logger.info(f"Provider race started for {browser_id}: candidates={len(self._providers)}")
         tasks = {
             provider: asyncio.create_task(
                 self._create_ready_candidate(
@@ -75,8 +80,8 @@ class ProviderRaceBackend:
         for completed in asyncio.as_completed(tasks.values()):
             try:
                 winner = await completed
-            except Exception as e:
-                logger.warning(f"Provider-race candidate failed: {type(e).__name__}: {e}")
+            except Exception:
+                # The candidate logs its provider, phase, duration, and error type before raising.
                 continue
             break
 
@@ -87,7 +92,12 @@ class ProviderRaceBackend:
             backend=winner.backend,
             provider_browser_id=winner.provider_browser_id,
         )
-        logger.info(f"Provider-race winner for {browser_id}: {winner.provider}")
+        logger.info(
+            f"Provider-race winner for {browser_id}: provider={winner.provider} "
+            f"create_ms={winner.create_seconds * 1000:.0f} "
+            f"cdp_ready_ms={winner.cdp_ready_seconds * 1000:.0f} "
+            f"race_ms={(time.monotonic() - race_started) * 1000:.0f}"
+        )
 
         cleanup_task = asyncio.create_task(
             self._cleanup_race_losers(tasks, winner_provider=winner.provider)
@@ -105,16 +115,40 @@ class ProviderRaceBackend:
         browser_type: str | None,
     ) -> _Candidate:
         provider_browser_id = public_browser_id
+        candidate_started = time.monotonic()
+        phase = "create"
         try:
             result = await provider_backend.create_browser(
                 public_browser_id, origin_ip, target_domain, browser_type
             )
+            created_at = time.monotonic()
             result_browser_id = result.get("browser_id")
             if isinstance(result_browser_id, str):
                 provider_browser_id = result_browser_id
+            phase = "cdp_ready"
             await self._wait_until_cdp_ready(provider_backend, provider_browser_id)
-            return _Candidate(provider, provider_backend, provider_browser_id)
-        except Exception:
+            ready_at = time.monotonic()
+            create_seconds = created_at - candidate_started
+            cdp_ready_seconds = ready_at - created_at
+            logger.info(
+                f"Provider-race candidate ready for {public_browser_id}: provider={provider} "
+                f"create_ms={create_seconds * 1000:.0f} "
+                f"cdp_ready_ms={cdp_ready_seconds * 1000:.0f} "
+                f"total_ms={(ready_at - candidate_started) * 1000:.0f}"
+            )
+            return _Candidate(
+                provider,
+                provider_backend,
+                provider_browser_id,
+                create_seconds,
+                cdp_ready_seconds,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Provider-race candidate failed for {public_browser_id}: provider={provider} "
+                f"phase={phase} elapsed_ms={(time.monotonic() - candidate_started) * 1000:.0f} "
+                f"error={type(e).__name__}"
+            )
             await self._delete_quietly(provider, provider_backend, provider_browser_id)
             raise
 
@@ -134,8 +168,8 @@ class ProviderRaceBackend:
             except Exception as e:
                 last_error = e
                 logger.debug(
-                    f"Provider-race CDP probe {attempt}/{CDP_READY_ATTEMPTS} "
-                    f"for {browser_id} failed: {type(e).__name__}: {e}"
+                    f"Provider-race CDP probe {attempt}/{CDP_READY_ATTEMPTS} failed: "
+                    f"{type(e).__name__}"
                 )
             finally:
                 if client is not None:
@@ -162,11 +196,19 @@ class ProviderRaceBackend:
     async def _delete_quietly(
         self, provider: str, provider_backend: Backend, provider_browser_id: str
     ) -> None:
+        cleanup_started = time.monotonic()
         try:
             await provider_backend.delete_browser(provider_browser_id)
-            logger.info(f"Provider-race candidate cleaned up: {provider}")
+            logger.info(
+                f"Provider-race candidate cleaned up: provider={provider} "
+                f"cleanup_ms={(time.monotonic() - cleanup_started) * 1000:.0f}"
+            )
         except Exception as e:
-            logger.warning(f"Provider-race cleanup failed for {provider}: {type(e).__name__}: {e}")
+            logger.warning(
+                f"Provider-race cleanup failed: provider={provider} "
+                f"cleanup_ms={(time.monotonic() - cleanup_started) * 1000:.0f} "
+                f"error={type(e).__name__}"
+            )
 
     def _route(self, browser_id: str) -> tuple[Backend, str]:
         route = self._routes.get(browser_id)

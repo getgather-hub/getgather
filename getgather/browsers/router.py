@@ -175,7 +175,7 @@ async def websocket_proxy(
                 except (WebSocketDisconnect, RuntimeError):
                     logger.info("[CDP] Client disconnected")
                 except Exception as e:
-                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}")
 
             async def remote_to_client() -> None:
                 try:
@@ -192,7 +192,7 @@ async def websocket_proxy(
                 except ConnectionClosed as e:
                     logger.info(f"[CDP] Remote disconnected: code={e.code} reason={e.reason}")
                 except Exception as e:
-                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}")
 
             tasks = [
                 asyncio.create_task(client_to_remote()),
@@ -207,12 +207,12 @@ async def websocket_proxy(
                 except (asyncio.CancelledError, Exception):
                     pass
 
-    except OSError as e:
-        logger.error(f"[CDP] Could not connect to remote: {e}")
+    except OSError:
+        logger.error("[CDP] Could not connect to remote")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4502, reason="Remote server unreachable")
     except Exception as e:
-        logger.error(f"[CDP] Unexpected error: {type(e).__name__}: {e}")
+        logger.error(f"[CDP] Unexpected error: {type(e).__name__}")
         if client_ws.client_state == WebSocketState.CONNECTED:
             await client_ws.close(code=4500, reason="Internal proxy error")
     finally:
@@ -346,10 +346,13 @@ async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: boo
             remote_url = await backend.get_cdp_websocket_remote_url(browser_id)
         except Exception as e:
             logger.warning(
-                f"[CDP] Attempt {attempt + 1}/10 failed to get debugger URL from {browser_id}: {e}"
+                f"[CDP] Attempt {attempt + 1}/10 failed to get debugger URL from "
+                f"{browser_id}: {type(e).__name__}"
             )
         if remote_url is not None:
-            logger.info(f"[CDP] Got remote URL: {remote_url}")
+            # Provider URLs may contain bearer credentials (Daytona preview tokens,
+            # Browserbase signing keys). Never emit them to logs.
+            logger.info(f"[CDP] Resolved remote debugger URL for browser {browser_id}")
             break
         if attempt < 9:
             logger.debug("[CDP] Retrying in 3 seconds...")
@@ -360,7 +363,7 @@ async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: boo
         return
 
     # (3) Relay.
-    logger.info(f"[CDP] Client connected, proxying to {remote_url}")
+    logger.info(f"[CDP] Client connected, proxying browser {browser_id}")
     await websocket_proxy(client_ws, remote_url, browser_id, patch)
 
 
@@ -444,11 +447,11 @@ async def cdp_devtools_websocket_proxy(client_ws: WebSocket, path: str) -> None:
         except Exception as e:
             logger.warning(
                 f"[CDP] Attempt {attempt + 1}/10 failed to get page URL for "
-                f"{browser_id}/{page_id}: {e}"
+                f"{browser_id}/{page_id}: {type(e).__name__}"
             )
         if remote_url is not None:
             if remote_url != "":
-                logger.info(f"[CDP] Got page remote URL: {remote_url}")
+                logger.info(f"[CDP] Resolved remote debugger URL for page {page_id}")
             break
         if attempt < 9:
             logger.debug("[CDP] Retrying in 3 seconds...")
@@ -466,7 +469,7 @@ async def cdp_devtools_websocket_proxy(client_ws: WebSocket, path: str) -> None:
     # Relay. `cdp_targets_need_namespacing` lets each backend tell the router whether the URL it
     # returned already namespaces target ids (Fleet's external /devtools proxy) — in which case
     # we do not patch again (would double-prefix browser_id).
-    logger.info(f"[CDP] Connecting to {remote_url}")
+    logger.info(f"[CDP] Connecting remote debugger for page {page_id}")
     await websocket_proxy(
         client_ws,
         remote_url,

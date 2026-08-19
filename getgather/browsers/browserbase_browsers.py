@@ -108,7 +108,7 @@ async def websocket_proxy_attached(
                 except (WebSocketDisconnect, RuntimeError):
                     logger.info("[CDP] Client disconnected")
                 except Exception as e:
-                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}")
 
             async def remote_to_client() -> None:
                 try:
@@ -136,7 +136,7 @@ async def websocket_proxy_attached(
                 except ConnectionClosed as e:
                     logger.info(f"[CDP] Remote disconnected: code={e.code} reason={e.reason}")
                 except Exception as e:
-                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}")
 
             tasks = [
                 asyncio.create_task(client_to_remote()),
@@ -150,12 +150,12 @@ async def websocket_proxy_attached(
                 except (asyncio.CancelledError, Exception):
                     pass
             return
-    except OSError as e:
-        logger.warning(f"[CDP] Attach to {target_id} failed (OSError): {e}")
+    except OSError:
+        logger.warning(f"[CDP] Attach to {target_id} failed (OSError)")
     except InvalidStatus as e:
         logger.warning(f"[CDP] Attach to {target_id} rejected with HTTP {e.response.status_code}")
     except Exception as e:
-        logger.warning(f"[CDP] Attach to {target_id} failed ({type(e).__name__}): {e}")
+        logger.warning(f"[CDP] Attach to {target_id} failed ({type(e).__name__})")
 
     if client_ws.client_state == WebSocketState.CONNECTED:
         await client_ws.close(code=4502, reason="Remote server unreachable")
@@ -219,7 +219,8 @@ class BrowserbaseBackend:
         bb_id = str(data["id"])
         connect_url = str(data["connectUrl"])
         self._sessions[bb_id] = connect_url
-        logger.info(f"Browserbase session created: id={bb_id} connectUrl={connect_url}")
+        # connectUrl embeds a signing key and is a bearer secret; never log it.
+        logger.info(f"Browserbase session created: id={bb_id}")
         await self._wait_until_cdp_ready(connect_url, bb_id)
         return {"browser_id": bb_id, "status": "created", "ip": None}
 
@@ -279,8 +280,7 @@ class BrowserbaseBackend:
             except OSError as e:
                 last_exc = e
                 logger.warning(
-                    f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} "
-                    f"failed (OSError): {e}"
+                    f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} failed (OSError)"
                 )
             except InvalidStatus as e:
                 last_exc = e
@@ -292,13 +292,14 @@ class BrowserbaseBackend:
                 last_exc = e
                 logger.warning(
                     f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} "
-                    f"failed ({type(e).__name__}): {e}"
+                    f"failed ({type(e).__name__})"
                 )
 
             if attempt < attempts:
                 await asyncio.sleep(delay)
 
-        logger.error(f"[CDP] Browser {browser_id} not ready after {attempts} probes: {last_exc}")
+        error_name = type(last_exc).__name__ if last_exc is not None else "UnknownError"
+        logger.error(f"[CDP] Browser {browser_id} not ready after {attempts} probes: {error_name}")
         # Don't hand back a dead id — release the upstream session and surface the failure.
         try:
             await self.delete_browser(browser_id)
