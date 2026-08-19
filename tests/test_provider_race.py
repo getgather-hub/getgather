@@ -155,6 +155,42 @@ async def test_provider_race_cleans_failed_candidates(monkeypatch: MonkeyPatch) 
     assert second.deleted == ["public-id"]
 
 
+@pytest.mark.asyncio
+async def test_deleted_winner_does_not_fall_through_to_fallback(monkeypatch: MonkeyPatch) -> None:
+    fallback = _FakeBackend(
+        remote_url="wss://fallback.invalid", create_error=RuntimeError("fallback used")
+    )
+    winner = _FakeBackend(
+        provider_browser_id="provider-assigned-secret-id",
+        remote_url="wss://winner.invalid",
+    )
+    race = ProviderRaceBackend(fallback, {"fallback": fallback, "winner": winner})
+
+    async def ready(self: Any, provider_backend: _FakeBackend, browser_id: str) -> None:
+        assert await provider_backend.get_cdp_websocket_remote_url(browser_id)
+
+    monkeypatch.setattr(ProviderRaceBackend, "_wait_until_cdp_ready", ready)
+    await race.create_raced_browser("public-id", None, None, None)
+
+    assert await race.delete_browser("public-id") == {
+        "browser_id": "public-id",
+        "status": "deleted",
+    }
+    assert await race.browser_exists("public-id") is False
+    with pytest.raises(BrowserNotFound):
+        await race.get_browser("public-id", None, None)
+    assert "public-id" not in await race.list_browser_ids()
+    assert fallback.created == set()
+
+    # Existing CDP auto-start semantics are retained, but the browser stays on its winning provider.
+    result = await race.create_browser("public-id", None, None, None)
+    assert result["browser_id"] == "provider-assigned-secret-id"
+    assert await race.browser_exists("public-id") is True
+    assert fallback.created == set()
+
+    await race.shutdown()
+
+
 def test_provider_race_create_response_contains_only_proxy_url(monkeypatch: MonkeyPatch) -> None:
     from getgather.browsers import router as router_module
 

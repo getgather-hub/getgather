@@ -192,9 +192,17 @@ class ProviderRaceBackend:
         target_domain: str | None,
         browser_type: str | None,
     ) -> dict[str, Any]:
-        return await self._fallback.create_browser(
-            browser_id, origin_ip, target_domain, browser_type
+        provider_backend, provider_browser_id = self._route(browser_id)
+        # Preserve a raced browser's provider affinity when /cdp auto-starts it after deletion.
+        # Browserbase may assign a fresh provider id, so refresh the internal route from the result.
+        result = await provider_backend.create_browser(
+            provider_browser_id, origin_ip, target_domain, browser_type
         )
+        route = self._routes.get(browser_id)
+        result_browser_id = result.get("browser_id")
+        if route is not None and isinstance(result_browser_id, str):
+            self._routes[browser_id] = _WinnerRoute(provider_backend, result_browser_id)
+        return result
 
     async def get_browser(
         self, browser_id: str, origin_ip: str | None, target_domain: str | None
@@ -206,13 +214,19 @@ class ProviderRaceBackend:
     async def delete_browser(self, browser_id: str) -> dict[str, Any]:
         provider_backend, provider_browser_id = self._route(browser_id)
         await provider_backend.delete_browser(provider_browser_id)
-        self._routes.pop(browser_id, None)
+        # Keep the route as a tombstone. Falling through to the default backend after deletion can
+        # turn a subsequent GET into an upstream 500 or auto-start the id on a different provider.
         return {"browser_id": browser_id, "status": "deleted"}
 
     async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         fallback_ids = await self._fallback.list_browser_ids(scope)
         hidden_ids = {route.provider_browser_id for route in self._routes.values()}
-        return sorted((set(fallback_ids) - hidden_ids) | set(self._routes))
+        active_routes = {
+            browser_id
+            for browser_id, route in self._routes.items()
+            if await route.backend.browser_exists(route.provider_browser_id)
+        }
+        return sorted((set(fallback_ids) - hidden_ids) | active_routes)
 
     async def browser_exists(self, browser_id: str) -> bool:
         provider_backend, provider_browser_id = self._route(browser_id)
