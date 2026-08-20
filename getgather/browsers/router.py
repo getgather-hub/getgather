@@ -233,8 +233,10 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
         target_domain = request.headers.get("x-target-domains")
         browser_type = request.headers.get("x-browser-type")
         if isinstance(backend, ProviderRaceBackend):
-            browser_id = new_browser_id()
-            await backend.create_raced_browser(browser_id, origin_ip, target_domain, browser_type)
+            logical_browser_id = new_browser_id()
+            browser_id = await backend.create_raced_browser(
+                logical_browser_id, origin_ip, target_domain, browser_type
+            )
             cdp_url = str(request.url_for("cdp_browser_websocket_proxy", browser_id=browser_id))
             logger.info(f"Browser {browser_id} is CDP-ready.")
             # Preserve the existing create contract. cdp_url is additive; CDP readiness is an

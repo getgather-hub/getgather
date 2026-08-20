@@ -133,13 +133,71 @@ async def test_browserbase_create_browser_stores_connect_url_mapping(
     assert fake_client.create_call["url"] == BROWSERBASE_SESSIONS_URL
     assert fake_client.create_call["headers"]["x-bb-api-key"] == "test-key"
     assert fake_client.create_call["headers"]["Content-Type"] == "application/json"
-    assert fake_client.create_call["json"] == {"keepAlive": True}
+    assert fake_client.create_call["json"] == {
+        "keepAlive": True,
+        "userMetadata": {"getgatherBrowserId": "ignored-id"},
+    }
 
     # The id -> connectUrl mapping is stored for the CDP proxy to look up.
     assert await backend.get_cdp_websocket_remote_url(SESSION_ID) == CONNECT_URL
     assert await backend.get_cdp_websocket_remote_url("unknown") is None
     assert await backend.browser_exists(SESSION_ID) is True
     assert SESSION_ID in await backend.list_browser_ids()
+
+
+@pytest.mark.asyncio
+async def test_browserbase_recovers_session_from_provider_metadata(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "BROWSERBASE_API_KEY", "test-key")
+    get_calls: list[dict[str, Any]] = []
+
+    class RecoveryResponse:
+        def __init__(self, body: Any) -> None:
+            self._body = body
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Any:
+            return self._body
+
+    class RecoveryClient:
+        async def __aenter__(self) -> "RecoveryClient":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def get(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            params: dict[str, str] | None = None,
+        ) -> RecoveryResponse:
+            get_calls.append({"url": url, "headers": headers, "params": params})
+            if url == BROWSERBASE_SESSIONS_URL:
+                return RecoveryResponse([
+                    {
+                        "id": SESSION_ID,
+                        "status": "RUNNING",
+                        "updatedAt": "2026-08-19",
+                        "userMetadata": {"getgatherBrowserId": "Bbuxvstp6"},
+                    }
+                ])
+            return RecoveryResponse(SAMPLE_RESPONSE)
+
+    def recovery_client_factory(**kwargs: Any) -> RecoveryClient:
+        return RecoveryClient()
+
+    monkeypatch.setattr(httpx, "AsyncClient", recovery_client_factory)
+
+    backend = BrowserbaseBackend()
+    assert await backend.resolve_session("logical-id") == SESSION_ID
+    assert await backend.get_cdp_websocket_remote_url(SESSION_ID) == CONNECT_URL
+    assert get_calls[0]["params"] == {"q": "user_metadata['getgatherBrowserId']:'logical-id'"}
+    assert await backend.list_routed_sessions() == {"Bbuxvstp6": SESSION_ID}
 
 
 @pytest.mark.asyncio
@@ -176,6 +234,7 @@ async def test_browserbase_create_browser_attaches_residential_proxy(
     assert result == {"browser_id": SESSION_ID, "status": "created", "ip": None}
     assert fake_client.create_call["json"] == {
         "keepAlive": True,
+        "userMetadata": {"getgatherBrowserId": "bid"},
         "proxies": [{"type": "external", "server": proxy_url}],
     }
 
@@ -198,7 +257,10 @@ async def test_browserbase_create_browser_omits_proxies_without_proxy(
 
     backend = BrowserbaseBackend()
     await backend.create_browser("bid", "1.2.3.4", "amazon.com", None)
-    assert fake_client.create_call["json"] == {"keepAlive": True}
+    assert fake_client.create_call["json"] == {
+        "keepAlive": True,
+        "userMetadata": {"getgatherBrowserId": "bid"},
+    }
 
 
 @pytest.mark.asyncio
