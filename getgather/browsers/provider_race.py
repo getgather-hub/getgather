@@ -7,6 +7,11 @@ from fastapi import WebSocket
 from loguru import logger
 
 from getgather.browsers.backend import BROWSER_SCOPE, Backend
+from getgather.browsers.route_id import (
+    BrowserRoute,
+    make_routed_browser_id,
+    parse_routed_browser_id,
+)
 from getgather.cdp_client import open_cdp_url
 from getgather.config import settings
 
@@ -14,12 +19,6 @@ CDP_READY_ATTEMPTS = 30
 CDP_READY_RETRY_SECONDS = 1.0
 CDP_OPEN_TIMEOUT_SECONDS = 10.0
 CDP_COMMAND_TIMEOUT_SECONDS = 10.0
-
-
-@dataclass(frozen=True)
-class _WinnerRoute:
-    backend: Backend
-    provider_browser_id: str
 
 
 @dataclass(frozen=True)
@@ -32,19 +31,22 @@ class _Candidate:
 
 
 class ProviderRaceBackend:
-    """Race configured browser providers and proxy the winner behind an opaque public id.
+    """Race configured browser providers and proxy the winner behind a routed public id.
 
-    Routes intentionally live in memory for the first experiment. A restart, or a follow-up
-    request landing on another server replica, loses the route. The public API never exposes the
-    provider name, provider browser id, or provider CDP URL.
+    The public ID carries a short provider code, so another process or replica can recover the
+    route from the provider without a shared database. Provider browser IDs and CDP URLs remain
+    internal.
     """
 
-    def __init__(self, fallback: Backend, providers: dict[str, Backend]) -> None:
+    def __init__(
+        self,
+        fallback: Backend,
+        providers: dict[str, Backend],
+    ) -> None:
         if len(providers) < 2:
             raise ValueError("BROWSER_PROVIDER_RACE requires at least two configured providers")
         self._fallback = fallback
         self._providers = providers
-        self._routes: dict[str, _WinnerRoute] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -58,7 +60,7 @@ class ProviderRaceBackend:
         origin_ip: str | None,
         target_domain: str | None,
         browser_type: str | None,
-    ) -> None:
+    ) -> str:
         """Create one candidate per provider and register the first CDP-ready winner."""
         race_started = time.monotonic()
         logger.info(f"Provider race started for {browser_id}: candidates={len(self._providers)}")
@@ -67,7 +69,7 @@ class ProviderRaceBackend:
                 self._create_ready_candidate(
                     provider,
                     provider_backend,
-                    browser_id,
+                    make_routed_browser_id(provider, browser_id),
                     origin_ip,
                     target_domain,
                     browser_type,
@@ -88,10 +90,7 @@ class ProviderRaceBackend:
         if winner is None:
             raise RuntimeError("No browser provider became CDP-ready")
 
-        self._routes[browser_id] = _WinnerRoute(
-            backend=winner.backend,
-            provider_browser_id=winner.provider_browser_id,
-        )
+        public_browser_id = make_routed_browser_id(winner.provider, browser_id)
         logger.info(
             f"Provider-race winner for {browser_id}: provider={winner.provider} "
             f"create_ms={winner.create_seconds * 1000:.0f} "
@@ -104,6 +103,7 @@ class ProviderRaceBackend:
         )
         self._cleanup_tasks.add(cleanup_task)
         cleanup_task.add_done_callback(self._cleanup_tasks.discard)
+        return public_browser_id
 
     async def _create_ready_candidate(
         self,
@@ -210,11 +210,24 @@ class ProviderRaceBackend:
                 f"error={type(e).__name__}"
             )
 
-    def _route(self, browser_id: str) -> tuple[Backend, str]:
-        route = self._routes.get(browser_id)
+    async def _route(
+        self, browser_id: str, *, resolve_provider_id: bool = True
+    ) -> tuple[Backend, str, BrowserRoute | None]:
+        route = parse_routed_browser_id(browser_id)
         if route is None:
-            return self._fallback, browser_id
-        return route.backend, route.provider_browser_id
+            return self._fallback, browser_id, None
+        provider_backend = self._providers.get(route.provider)
+        if provider_backend is None:
+            raise RuntimeError(f"Provider route cannot be resolved: {route.provider}")
+        provider_browser_id = route.browser_id
+        if route.provider == "browserbase" and resolve_provider_id:
+            from getgather.browsers.browserbase_browsers import BrowserbaseBackend
+
+            if isinstance(provider_backend, BrowserbaseBackend):
+                resolved_id = await provider_backend.resolve_session(route.browser_id)
+                if resolved_id is not None:
+                    provider_browser_id = resolved_id
+        return provider_backend, provider_browser_id, route
 
     async def shutdown(self) -> None:
         if self._cleanup_tasks:
@@ -234,44 +247,51 @@ class ProviderRaceBackend:
         target_domain: str | None,
         browser_type: str | None,
     ) -> dict[str, Any]:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(
+            browser_id, resolve_provider_id=False
+        )
         # Preserve a raced browser's provider affinity when /cdp auto-starts it after deletion.
-        # Browserbase may assign a fresh provider id, so refresh the internal route from the result.
+        # Browserbase attaches this routed id as metadata and may assign a fresh provider UUID.
         result = await provider_backend.create_browser(
             provider_browser_id, origin_ip, target_domain, browser_type
         )
-        route = self._routes.get(browser_id)
-        result_browser_id = result.get("browser_id")
-        if route is not None and isinstance(result_browser_id, str):
-            self._routes[browser_id] = _WinnerRoute(provider_backend, result_browser_id)
         return result
 
     async def get_browser(
         self, browser_id: str, origin_ip: str | None, target_domain: str | None
     ) -> dict[str, Any]:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         await provider_backend.get_browser(provider_browser_id, origin_ip, target_domain)
         return {"browser_id": browser_id, "status": "created"}
 
     async def delete_browser(self, browser_id: str) -> dict[str, Any]:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         await provider_backend.delete_browser(provider_browser_id)
-        # Keep the route as a tombstone. Falling through to the default backend after deletion can
-        # turn a subsequent GET into an upstream 500 or auto-start the id on a different provider.
         return {"browser_id": browser_id, "status": "deleted"}
 
     async def list_browser_ids(self, scope: BROWSER_SCOPE = "all") -> list[str]:
         fallback_ids = await self._fallback.list_browser_ids(scope)
-        hidden_ids = {route.provider_browser_id for route in self._routes.values()}
-        active_routes = {
-            browser_id
-            for browser_id, route in self._routes.items()
-            if await route.backend.browser_exists(route.provider_browser_id)
-        }
-        return sorted((set(fallback_ids) - hidden_ids) | active_routes)
+        browser_ids = set(fallback_ids)
+        for provider, provider_backend in self._providers.items():
+            if provider == "browserbase":
+                from getgather.browsers.browserbase_browsers import BrowserbaseBackend
+
+                if isinstance(provider_backend, BrowserbaseBackend):
+                    routes = await provider_backend.list_routed_sessions()
+                    browser_ids.difference_update(routes.values())
+                    browser_ids.update(routes)
+                    continue
+            provider_ids = await provider_backend.list_browser_ids(scope)
+            browser_ids.update(
+                provider_id
+                for provider_id in provider_ids
+                if (route := parse_routed_browser_id(provider_id)) is not None
+                and route.provider == provider
+            )
+        return sorted(browser_ids)
 
     async def browser_exists(self, browser_id: str) -> bool:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.browser_exists(provider_browser_id)
 
     async def cleanup_idle(self) -> list[str]:
@@ -286,7 +306,7 @@ class ProviderRaceBackend:
         return deleted
 
     async def get_cdp_base_url(self, browser_id: str) -> str:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_cdp_base_url(provider_browser_id)
 
     def cdp_websocket_base(self) -> None:
@@ -294,29 +314,34 @@ class ProviderRaceBackend:
         return None
 
     async def get_cdp_websocket_remote_url(self, browser_id: str) -> str | None:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_cdp_websocket_remote_url(provider_browser_id)
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         if browser_id is None:
             return self._fallback.cdp_targets_need_namespacing()
-        provider_backend, provider_browser_id = self._route(browser_id)
-        return provider_backend.cdp_targets_need_namespacing(provider_browser_id)
+        route = parse_routed_browser_id(browser_id)
+        if route is None:
+            return self._fallback.cdp_targets_need_namespacing(browser_id)
+        provider_backend = self._providers.get(route.provider)
+        if provider_backend is None:
+            raise RuntimeError(f"Provider route cannot be resolved: {route.provider}")
+        return provider_backend.cdp_targets_need_namespacing(route.browser_id)
 
     async def get_devtools_websocket_remote_url(
         self, client_ws: WebSocket, browser_id: str, page_id: str
     ) -> str | None:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_devtools_websocket_remote_url(
             client_ws, provider_browser_id, page_id
         )
 
     async def get_vnc_endpoint(self, browser_id: str) -> tuple[str, int] | None:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_vnc_endpoint(provider_browser_id)
 
     async def get_live_view_url(self, browser_id: str) -> str | None:
-        provider_backend, provider_browser_id = self._route(browser_id)
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_live_view_url(provider_browser_id)
 
 
