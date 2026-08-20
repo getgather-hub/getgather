@@ -53,7 +53,7 @@ NETWORK_ERROR_PATTERNS = (
     "err-connection-closed",
     "err-empty-response",
     "err-http-protocol-error",
-    "amazon-something-error-ca",
+    "amazon-something-error",
 )
 
 
