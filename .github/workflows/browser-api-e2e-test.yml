@@ -36,9 +36,6 @@ jobs:
     needs: setup
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    concurrency:
-      group: ${{ matrix.browser_backend == 'daytona' && 'daytona-ci' || format('{0}-{1}', github.run_id, github.job) }}
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -85,9 +82,6 @@ jobs:
     needs: setup
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    concurrency:
-      group: ${{ matrix.browser_backend == 'daytona' && 'daytona-ci' || format('{0}-{1}', github.run_id, github.job) }}
-      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:

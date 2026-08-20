@@ -36,7 +36,16 @@ def prepare_new_browser(
     browser_ids.append(browser_id)
 
     client.delete(f"/api/v1/browsers/{browser_id}")
-    assert client.post(f"/api/v1/browsers/{browser_id}").status_code == 200
+    create: httpx.Response | None = None
+    last_failure = "no response"
+    for _ in range(RETRY_TIMEOUT):
+        response = client.post(f"/api/v1/browsers/{browser_id}")
+        if response.status_code == 200:
+            create = response
+            break
+        last_failure = f"HTTP {response.status_code}: {response.text}"
+        time.sleep(1)
+    assert create is not None, f"Browser creation never returned 200 ({last_failure})"
 
     page_id: str | None = None
     for _ in range(RETRY_TIMEOUT):

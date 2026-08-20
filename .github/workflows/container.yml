@@ -99,9 +99,6 @@ jobs:
     if: ${{ needs.setup.outputs.run_daytona == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    concurrency:
-      group: daytona-ci
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 
