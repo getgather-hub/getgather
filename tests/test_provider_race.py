@@ -184,7 +184,7 @@ async def test_deleted_winner_does_not_fall_through_to_fallback(monkeypatch: Mon
     await race.shutdown()
 
 
-def test_provider_race_create_response_contains_only_proxy_url(monkeypatch: MonkeyPatch) -> None:
+def test_provider_race_create_response_preserves_contract(monkeypatch: MonkeyPatch) -> None:
     from getgather.browsers import router as router_module
 
     fallback = _FakeBackend()
@@ -210,7 +210,6 @@ def test_provider_race_create_response_contains_only_proxy_url(monkeypatch: Monk
     assert response.status_code == 200
     assert response.json() == {
         "browser_id": "Bduxvstp6",
-        "cdp_url": "ws://testserver/cdp/Bduxvstp6",
         "status": "created",
     }
     assert "provider" not in response.text

@@ -237,11 +237,10 @@ async def create_browser_auto_endpoint(request: Request) -> dict[str, Any]:
             browser_id = await backend.create_raced_browser(
                 logical_browser_id, origin_ip, target_domain, browser_type
             )
-            cdp_url = str(request.url_for("cdp_browser_websocket_proxy", browser_id=browser_id))
             logger.info(f"Browser {browser_id} is CDP-ready.")
-            # Preserve the existing create contract. cdp_url is additive; CDP readiness is an
-            # internal guarantee rather than a new externally visible status value.
-            return {"browser_id": browser_id, "cdp_url": cdp_url, "status": "created"}
+            # CDP readiness is an internal guarantee rather than a new externally visible status.
+            # Keep the original create response shape; clients derive /cdp/{browser_id} themselves.
+            return {"browser_id": browser_id, "status": "created"}
         explicit = settings.BROWSER_BEST_OF_N
         n = max(1, explicit if explicit is not None else backend.default_best_of_n)
         if n == 1:
