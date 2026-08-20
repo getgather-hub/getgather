@@ -35,6 +35,8 @@ async def call_chromefleet_api(
     method: HTTP_METHOD,
     browser_id: str | None = None,
     *,
+    path_suffix: str = "",
+    json: Any | None = None,
     target_domain: str | None = None,
     timeout: float = 120.0,
     retries: int = 3,
@@ -43,7 +45,7 @@ async def call_chromefleet_api(
 ) -> httpx.Response | None:
     base_url = settings.effective_chromefleet_url.rstrip("/")
     path = f"/api/v1/browsers/{browser_id}" if browser_id else "/api/v1/browsers"
-    url = f"{base_url}{path}"
+    url = f"{base_url}{path}{path_suffix}"
 
     if headers is None:
         headers = build_chromefleet_headers(target_domain=target_domain)
@@ -65,6 +67,7 @@ async def call_chromefleet_api(
                 method,
                 url,
                 headers=headers,
+                json=json,
                 timeout=httpx.Timeout(connect=2.0, pool=None, read=timeout, write=timeout),
             )
         except Exception as e:
