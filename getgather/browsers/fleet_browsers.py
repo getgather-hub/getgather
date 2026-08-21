@@ -2,11 +2,10 @@ from typing import Any, Literal, cast
 
 import httpx
 from fastapi import WebSocket
-from fastmcp.server.dependencies import get_http_headers
 from httpx_retries import Retry, RetryTransport
 
 from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
-from getgather.client_ip import client_ip_var
+from getgather.client_ip import client_ip_var, request_headers_var
 from getgather.config import settings
 
 HTTP_METHOD = Literal["GET", "POST", "DELETE"]
@@ -15,17 +14,17 @@ DEFAULT_BEST_OF_N = 1
 
 
 def build_chromefleet_headers(*, target_domain: str | None = None) -> dict[str, str]:
-    mcp_headers = get_http_headers(include_all=True)
+    req_headers = request_headers_var.get()
     headers = {
-        "x-forwarded-for": mcp_headers.get("x-forwarded-for", None),
-        "user-agent": mcp_headers.get("user-agent", None),
-        "sec-ch-ua": mcp_headers.get("sec-ch-ua", None),
-        "sec-ch-ua-mobile": mcp_headers.get("sec-ch-ua-mobile", None),
-        "sec-ch-ua-platform": mcp_headers.get("sec-ch-ua-platform", None),
-        "x-origin-ip": mcp_headers.get("x-origin-ip") or client_ip_var.get(),
-        "x-origin-id": mcp_headers.get("x-origin-id", None),
-        "x-origin-ua": mcp_headers.get("x-origin-ua", None),
-        "x-browser-type": mcp_headers.get("x-browser-type", None),
+        "x-forwarded-for": req_headers.get("x-forwarded-for", None),
+        "user-agent": req_headers.get("user-agent", None),
+        "sec-ch-ua": req_headers.get("sec-ch-ua", None),
+        "sec-ch-ua-mobile": req_headers.get("sec-ch-ua-mobile", None),
+        "sec-ch-ua-platform": req_headers.get("sec-ch-ua-platform", None),
+        "x-origin-ip": req_headers.get("x-origin-ip") or client_ip_var.get(),
+        "x-origin-id": req_headers.get("x-origin-id", None),
+        "x-origin-ua": req_headers.get("x-origin-ua", None),
+        "x-browser-type": req_headers.get("x-browser-type", None),
         "x-target-domains": target_domain,
     }
     return {k: v for k, v in headers.items() if v is not None}

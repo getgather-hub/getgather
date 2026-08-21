@@ -7,11 +7,11 @@ from starlette.types import Message, Receive, Scope, Send
 
 from getgather import tracing
 from getgather.tracing import (
-    MCP_SESSION_ID_HEADER,
     SCOPE_SESSION_ID_KEY,
+    SESSION_ID_HEADER,
     TRACEPARENT_HEADER,
     TRACESTATE_HEADER,
-    MCPSessionTraceMiddleware,
+    SessionTraceMiddleware,
 )
 
 
@@ -27,7 +27,7 @@ class _CapturingApp:
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
-async def _drive(middleware: MCPSessionTraceMiddleware, scope: Scope) -> list[Message]:
+async def _drive(middleware: SessionTraceMiddleware, scope: Scope) -> list[Message]:
     sent: list[Message] = []
 
     async def _receive() -> Message:
@@ -60,17 +60,17 @@ def _http_scope(path: str, headers: list[tuple[bytes, bytes]]) -> Scope:
 
 def test_case1_caller_traceparent_passes_through_unchanged() -> None:
     inner = _CapturingApp()
-    middleware = MCPSessionTraceMiddleware(inner)
+    middleware = SessionTraceMiddleware(inner)
     session_id = uuid.uuid4().hex
     caller_traceparent = b"00-12345678901234567890123456789012-1234567890123456-01"
     caller_tracestate = b"vendor=foo"
 
     scope = _http_scope(
-        "/mcp/",
+        "/api/v1/browsers",
         [
             (TRACEPARENT_HEADER, caller_traceparent),
             (TRACESTATE_HEADER, caller_tracestate),
-            (MCP_SESSION_ID_HEADER, session_id.encode()),
+            (SESSION_ID_HEADER, session_id.encode()),
         ],
     )
     sent = asyncio.run(_drive(middleware, scope))
@@ -81,35 +81,35 @@ def test_case1_caller_traceparent_passes_through_unchanged() -> None:
     received = dict(inner.received_headers)
     assert received[TRACEPARENT_HEADER] == caller_traceparent
     assert received[TRACESTATE_HEADER] == caller_tracestate
-    assert received[MCP_SESSION_ID_HEADER] == session_id.encode()
+    assert received[SESSION_ID_HEADER] == session_id.encode()
 
     assert session_id not in tracing._emitted_session_root_spans  # pyright: ignore[reportPrivateUsage]
 
     start = next(m for m in sent if m["type"] == "http.response.start")
     response_headers = dict(start["headers"])
-    assert response_headers[MCP_SESSION_ID_HEADER] == session_id.encode()
+    assert response_headers[SESSION_ID_HEADER] == session_id.encode()
 
 
 def test_case2_no_traceparent_injects_session_traceparent_and_emits_root_once() -> None:
     inner = _CapturingApp()
-    middleware = MCPSessionTraceMiddleware(inner)
+    middleware = SessionTraceMiddleware(inner)
     session_id = uuid.uuid4().hex
 
-    scope = _http_scope("/mcp/", [(MCP_SESSION_ID_HEADER, session_id.encode())])
+    scope = _http_scope("/api/v1/browsers", [(SESSION_ID_HEADER, session_id.encode())])
     asyncio.run(_drive(middleware, scope))
 
     assert inner.scope is not None
     received = dict(inner.received_headers)
-    expected_traceparent = MCPSessionTraceMiddleware._traceparent_for_mcp_session(session_id)  # pyright: ignore[reportPrivateUsage]
+    expected_traceparent = SessionTraceMiddleware._traceparent_for_session(session_id)  # pyright: ignore[reportPrivateUsage]
     assert received[TRACEPARENT_HEADER] == expected_traceparent
     assert TRACESTATE_HEADER not in received
-    assert received[MCP_SESSION_ID_HEADER] == session_id.encode()
+    assert received[SESSION_ID_HEADER] == session_id.encode()
     assert session_id in tracing._emitted_session_root_spans  # pyright: ignore[reportPrivateUsage]
 
     # Second request with same session id reuses the root span (no re-emit).
     inner2 = _CapturingApp()
-    middleware2 = MCPSessionTraceMiddleware(inner2)
-    scope2 = _http_scope("/mcp/", [(MCP_SESSION_ID_HEADER, session_id.encode())])
+    middleware2 = SessionTraceMiddleware(inner2)
+    scope2 = _http_scope("/api/v1/browsers", [(SESSION_ID_HEADER, session_id.encode())])
     asyncio.run(_drive(middleware2, scope2))
     assert inner2.scope is not None
     assert (
@@ -117,11 +117,11 @@ def test_case2_no_traceparent_injects_session_traceparent_and_emits_root_once() 
     )  # still session-deterministic
 
 
-def test_no_mcp_session_id_header_generates_one() -> None:
+def test_no_session_id_header_generates_one() -> None:
     inner = _CapturingApp()
-    middleware = MCPSessionTraceMiddleware(inner)
+    middleware = SessionTraceMiddleware(inner)
 
-    scope = _http_scope("/mcp/", [])
+    scope = _http_scope("/api/v1/browsers", [])
     sent = asyncio.run(_drive(middleware, scope))
 
     assert inner.scope is not None
@@ -130,41 +130,43 @@ def test_no_mcp_session_id_header_generates_one() -> None:
     int(generated_id, 16)  # valid hex
 
     received = dict(inner.received_headers)
-    assert received[MCP_SESSION_ID_HEADER] == generated_id.encode()
+    assert received[SESSION_ID_HEADER] == generated_id.encode()
 
     start = next(m for m in sent if m["type"] == "http.response.start")
     response_headers = dict(start["headers"])
-    assert response_headers[MCP_SESSION_ID_HEADER] == generated_id.encode()
+    assert response_headers[SESSION_ID_HEADER] == generated_id.encode()
 
 
 def test_invalid_caller_traceparent_falls_back_to_case2() -> None:
     inner = _CapturingApp()
-    middleware = MCPSessionTraceMiddleware(inner)
+    middleware = SessionTraceMiddleware(inner)
     session_id = uuid.uuid4().hex
 
     scope = _http_scope(
-        "/mcp/",
+        "/api/v1/browsers",
         [
             (TRACEPARENT_HEADER, b"not-a-valid-traceparent"),
-            (MCP_SESSION_ID_HEADER, session_id.encode()),
+            (SESSION_ID_HEADER, session_id.encode()),
         ],
     )
     asyncio.run(_drive(middleware, scope))
 
     received = dict(inner.received_headers)
-    expected_traceparent = MCPSessionTraceMiddleware._traceparent_for_mcp_session(session_id)  # pyright: ignore[reportPrivateUsage]
+    expected_traceparent = SessionTraceMiddleware._traceparent_for_session(session_id)  # pyright: ignore[reportPrivateUsage]
     assert received[TRACEPARENT_HEADER] == expected_traceparent
     assert session_id in tracing._emitted_session_root_spans  # pyright: ignore[reportPrivateUsage]
 
 
-def test_non_mcp_path_is_passthrough() -> None:
-    inner = _CapturingApp()
-    middleware = MCPSessionTraceMiddleware(inner)
+def test_non_http_scope_is_passthrough() -> None:
+    called_with: list[Scope] = []
 
-    original_headers = [(b"x-foo", b"bar")]
-    scope = _http_scope("/health", list(original_headers))
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        called_with.append(scope)
+
+    middleware = SessionTraceMiddleware(inner)
+
+    scope: Scope = {"type": "lifespan"}
     asyncio.run(_drive(middleware, scope))
 
-    assert inner.scope is not None
-    assert SCOPE_SESSION_ID_KEY not in inner.scope
-    assert inner.received_headers == original_headers
+    assert called_with == [scope]
+    assert SCOPE_SESSION_ID_KEY not in scope

@@ -1,8 +1,7 @@
-import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Generator
+from typing import Generator
 
 import pytest
 from pytest import MonkeyPatch
@@ -19,14 +18,3 @@ def temp_project_dir(monkeypatch: MonkeyPatch) -> Generator[Path, None, None]:
     # Clean up
     if temp_path.exists():
         shutil.rmtree(temp_path)
-
-
-@pytest.fixture
-def mcp_config() -> dict[str, Any]:
-    return {
-        "mcpServers": {
-            "getgather": {
-                "url": f"{os.environ.get('HOST', 'http://localhost:23456')}/mcp",
-            }
-        }
-    }
