@@ -15,6 +15,7 @@ from getgather.browser import create_remote_browser, terminate_remote_browser
 from getgather.browsers.router import backend, router as browsers_router
 from getgather.config import PROJECT_DIR, settings
 from getgather.logs import LoggingContextMiddleware
+from getgather.pages_api_router import router as pages_router
 from getgather.tracing import SessionTraceMiddleware, instrument_fastapi
 
 BACKGROUND_TASK_INTERVAL = 5 * 60  # seconds
@@ -85,6 +86,7 @@ async def extended_health():
 
 
 app.include_router(browsers_router)
+app.include_router(pages_router)
 
 
 if settings.CHROMEFLEET_URL:
