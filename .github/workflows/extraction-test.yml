@@ -64,6 +64,10 @@ jobs:
       - name: Prepare back-end environment
         uses: ./.github/actions/prepare-backend
 
+      - name: Pull Chrome container image
+        if: ${{ matrix.browser_backend == 'podman' }}
+        run: podman pull ghcr.io/remotebrowser/chrome-live
+
       - name: Verify Daytona API reachable
         if: ${{ matrix.browser_backend == 'daytona' }}
         run: while ! curl -sf "${DAYTONA_API_URL}/health" >/dev/null; do echo "waiting for Daytona..."; sleep 2; done
@@ -109,6 +113,10 @@ jobs:
 
       - name: Prepare back-end environment
         uses: ./.github/actions/prepare-backend
+
+      - name: Pull Chrome container image
+        if: ${{ matrix.browser_backend == 'podman' }}
+        run: podman pull ghcr.io/remotebrowser/chrome-live
 
       - name: Verify Daytona API reachable
         if: ${{ matrix.browser_backend == 'daytona' }}
