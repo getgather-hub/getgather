@@ -67,7 +67,7 @@ class BrowserSettings(BaseSettings):
 
     # Experimental best-of-providers browser creation. When enabled, the server-assigned create
     # endpoint races every configured remote provider (Fly/Chrome Fleet, Daytona, Browserbase),
-    # returns a provider-neutral local /cdp URL, and keeps an in-memory route to the winner.
+    # returns the first CDP-ready browser, and encodes its provider route in the browser ID.
     BROWSER_PROVIDER_RACE: bool = False
 
     @property

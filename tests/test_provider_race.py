@@ -19,14 +19,17 @@ class _FakeBackend:
         remote_url: str = "wss://provider.invalid/cdp",
         namespacing: bool = True,
         create_error: Exception | None = None,
+        readiness_error: Exception | None = None,
     ) -> None:
         self.create_delay = create_delay
         self.provider_browser_id = provider_browser_id
         self.remote_url = remote_url
         self.namespacing = namespacing
         self.create_error = create_error
+        self.readiness_error = readiness_error
         self.created: set[str] = set()
         self.deleted: list[str] = []
+        self.readiness_checks: list[str] = []
 
     @property
     def default_best_of_n(self) -> int:
@@ -85,6 +88,12 @@ class _FakeBackend:
             return None
         return f"{self.remote_url}/{browser_id}"
 
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        self.readiness_checks.append(browser_id)
+        if self.readiness_error is not None:
+            raise self.readiness_error
+        assert await self.get_cdp_websocket_remote_url(browser_id)
+
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         del browser_id
         return self.namespacing
@@ -105,23 +114,17 @@ class _FakeBackend:
 
 
 @pytest.mark.asyncio
-async def test_provider_race_routes_public_id_to_fastest_ready_provider(
-    monkeypatch: MonkeyPatch,
-) -> None:
+async def test_provider_race_routes_public_id_to_fastest_ready_provider() -> None:
     slow = _FakeBackend(create_delay=0.02, remote_url="wss://slow.invalid", namespacing=False)
     fast = _FakeBackend(remote_url="wss://fast.invalid")
     race = ProviderRaceBackend(slow, {"fly": slow, "daytona": fast})
-
-    async def ready(self: Any, provider_backend: _FakeBackend, browser_id: str) -> None:
-        assert await provider_backend.get_cdp_websocket_remote_url(browser_id)
-
-    monkeypatch.setattr(ProviderRaceBackend, "_wait_until_cdp_ready", ready)
 
     public_id = await race.create_raced_browser("Bpuxvstp6", "1.2.3.4", "example.com", "chrome")
 
     assert public_id == "Bduxvstp6"
     assert await race.get_cdp_websocket_remote_url(public_id) == ("wss://fast.invalid/Bduxvstp6")
     assert race.cdp_targets_need_namespacing(public_id) is True
+    assert fast.readiness_checks == ["Bduxvstp6"]
     assert await race.get_browser(public_id, None, None) == {
         "browser_id": public_id,
         "status": "created",
@@ -133,16 +136,10 @@ async def test_provider_race_routes_public_id_to_fastest_ready_provider(
 
 
 @pytest.mark.asyncio
-async def test_provider_race_cleans_failed_candidates(monkeypatch: MonkeyPatch) -> None:
+async def test_provider_race_cleans_failed_candidates() -> None:
     first = _FakeBackend(create_error=RuntimeError("create failed"))
-    second = _FakeBackend()
+    second = _FakeBackend(readiness_error=RuntimeError("CDP failed"))
     race = ProviderRaceBackend(first, {"fly": first, "daytona": second})
-
-    async def never_ready(self: Any, provider_backend: _FakeBackend, browser_id: str) -> None:
-        del provider_backend, browser_id
-        raise RuntimeError("CDP failed")
-
-    monkeypatch.setattr(ProviderRaceBackend, "_wait_until_cdp_ready", never_ready)
 
     with pytest.raises(RuntimeError, match="No browser provider became CDP-ready"):
         await race.create_raced_browser("Bpuxvstp6", None, None, None)
@@ -152,17 +149,13 @@ async def test_provider_race_cleans_failed_candidates(monkeypatch: MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_deleted_winner_does_not_fall_through_to_fallback(monkeypatch: MonkeyPatch) -> None:
+async def test_deleted_winner_does_not_fall_through_to_fallback() -> None:
     fallback = _FakeBackend(
         remote_url="wss://fallback.invalid", create_error=RuntimeError("fallback used")
     )
     winner = _FakeBackend(remote_url="wss://winner.invalid")
     race = ProviderRaceBackend(fallback, {"fly": fallback, "daytona": winner})
 
-    async def ready(self: Any, provider_backend: _FakeBackend, browser_id: str) -> None:
-        assert await provider_backend.get_cdp_websocket_remote_url(browser_id)
-
-    monkeypatch.setattr(ProviderRaceBackend, "_wait_until_cdp_ready", ready)
     public_id = await race.create_raced_browser("Bpuxvstp6", None, None, None)
 
     assert await race.delete_browser(public_id) == {
@@ -216,17 +209,13 @@ def test_provider_race_create_response_preserves_contract(monkeypatch: MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_provider_route_survives_process_boundary(monkeypatch: MonkeyPatch) -> None:
+async def test_provider_route_survives_process_boundary() -> None:
     first_backend = _FakeBackend()
     first = ProviderRaceBackend(
         first_backend,
         {"daytona": first_backend, "fly": _FakeBackend(create_delay=0.02)},
     )
 
-    async def ready(self: Any, provider_backend: _FakeBackend, browser_id: str) -> None:
-        assert await provider_backend.get_cdp_websocket_remote_url(browser_id)
-
-    monkeypatch.setattr(ProviderRaceBackend, "_wait_until_cdp_ready", ready)
     public_id = await first.create_raced_browser("Bpuxvstp6", None, None, None)
 
     second_backend = _FakeBackend()

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import httpx
@@ -15,6 +16,11 @@ BROWSER_NAME_PREFIX = "chromium-"
 # Which browsers a listing should include. `all` is the full inventory, including ones a
 # backend can resume on demand; `live` is only those able to serve CDP right now.
 BROWSER_SCOPE = Literal["all", "live"]
+
+CDP_READY_ATTEMPTS = 30
+CDP_READY_RETRY_SECONDS = 1.0
+CDP_OPEN_TIMEOUT_SECONDS = 10.0
+CDP_COMMAND_TIMEOUT_SECONDS = 10.0
 
 
 def rewrite_ws_url(ws_url: str, cdp_base_url: str) -> str:
@@ -66,6 +72,44 @@ async def get_page_websocket_debugger_url(cdp_base_url: str, page_id: str) -> st
                 ws_url = item.get("webSocketDebuggerUrl")
                 return rewrite_ws_url(str(ws_url), cdp_base_url) if ws_url else None
         return None
+
+
+async def wait_for_cdp_ready(
+    browser_id: str,
+    resolve_remote_url: Callable[[], Awaitable[str | None]],
+) -> None:
+    """Wait until a backend's browser socket accepts a real CDP command.
+
+    Backends own URL resolution and expose this helper through their `wait_until_cdp_ready`
+    implementation. Keeping retries here avoids duplicating transport mechanics while leaving
+    provider-specific readiness decisions out of the provider-race coordinator.
+    """
+    # Imported lazily because cdp_client imports browser.py, which in turn imports backend modules.
+    from getgather.cdp_client import open_cdp_url
+
+    last_error_name = "UnknownError"
+    for attempt in range(1, CDP_READY_ATTEMPTS + 1):
+        try:
+            remote_url = await resolve_remote_url()
+            if remote_url is None:
+                raise RuntimeError("CDP URL is not available")
+            client = await open_cdp_url(remote_url, timeout=CDP_OPEN_TIMEOUT_SECONDS)
+            try:
+                await asyncio.wait_for(
+                    client.send("Target.getTargets"), timeout=CDP_COMMAND_TIMEOUT_SECONDS
+                )
+                return
+            finally:
+                await client.aclose()
+        except Exception as e:
+            last_error_name = type(e).__name__
+            logger.debug(
+                f"[CDP] Readiness probe {attempt}/{CDP_READY_ATTEMPTS} for {browser_id} "
+                f"failed: {last_error_name}"
+            )
+        if attempt < CDP_READY_ATTEMPTS:
+            await asyncio.sleep(CDP_READY_RETRY_SECONDS)
+    raise RuntimeError(f"Browser {browser_id} did not become CDP-ready: {last_error_name}")
 
 
 def new_browser_id() -> str:
@@ -244,6 +288,14 @@ class Backend(Protocol):
         derived (per-session connectUrl for Browserbase, the external fleet's /cdp relay for
         Fleet, the per-browser /json/version discovery for Podman/Daytona). Returns None when
         the URL can't (yet) be resolved."""
+
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        """Return only after the browser accepts a real CDP command.
+
+        Each backend owns this decision because its create and connection semantics differ.
+        Provider racing relies on this method instead of knowing how a provider exposes CDP.
+        """
+        ...
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         """Whether `websocket_proxy` should rewrite target ids to namespace them by `browser_id`

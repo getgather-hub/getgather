@@ -12,13 +12,7 @@ from getgather.browsers.route_id import (
     make_routed_browser_id,
     parse_routed_browser_id,
 )
-from getgather.cdp_client import open_cdp_url
 from getgather.config import settings
-
-CDP_READY_ATTEMPTS = 30
-CDP_READY_RETRY_SECONDS = 1.0
-CDP_OPEN_TIMEOUT_SECONDS = 10.0
-CDP_COMMAND_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -126,7 +120,7 @@ class ProviderRaceBackend:
             if isinstance(result_browser_id, str):
                 provider_browser_id = result_browser_id
             phase = "cdp_ready"
-            await self._wait_until_cdp_ready(provider_backend, provider_browser_id)
+            await provider_backend.wait_until_cdp_ready(provider_browser_id)
             ready_at = time.monotonic()
             create_seconds = created_at - candidate_started
             cdp_ready_seconds = ready_at - created_at
@@ -151,32 +145,6 @@ class ProviderRaceBackend:
             )
             await self._delete_quietly(provider, provider_backend, provider_browser_id)
             raise
-
-    async def _wait_until_cdp_ready(self, provider_backend: Backend, browser_id: str) -> None:
-        last_error: Exception | None = None
-        for attempt in range(1, CDP_READY_ATTEMPTS + 1):
-            client = None
-            try:
-                remote_url = await provider_backend.get_cdp_websocket_remote_url(browser_id)
-                if remote_url is None:
-                    raise RuntimeError("CDP URL is not available")
-                client = await open_cdp_url(remote_url, timeout=CDP_OPEN_TIMEOUT_SECONDS)
-                await asyncio.wait_for(
-                    client.send("Target.getTargets"), timeout=CDP_COMMAND_TIMEOUT_SECONDS
-                )
-                return
-            except Exception as e:
-                last_error = e
-                logger.debug(
-                    f"Provider-race CDP probe {attempt}/{CDP_READY_ATTEMPTS} failed: "
-                    f"{type(e).__name__}"
-                )
-            finally:
-                if client is not None:
-                    await client.aclose()
-            if attempt < CDP_READY_ATTEMPTS:
-                await asyncio.sleep(CDP_READY_RETRY_SECONDS)
-        raise RuntimeError(f"Browser {browser_id} did not become CDP-ready: {last_error}")
 
     async def _cleanup_race_losers(
         self, tasks: dict[str, asyncio.Task[_Candidate]], *, winner_provider: str
@@ -316,6 +284,10 @@ class ProviderRaceBackend:
     async def get_cdp_websocket_remote_url(self, browser_id: str) -> str | None:
         provider_backend, provider_browser_id, _route = await self._route(browser_id)
         return await provider_backend.get_cdp_websocket_remote_url(provider_browser_id)
+
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        provider_backend, provider_browser_id, _route = await self._route(browser_id)
+        await provider_backend.wait_until_cdp_ready(provider_browser_id)
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         if browser_id is None:

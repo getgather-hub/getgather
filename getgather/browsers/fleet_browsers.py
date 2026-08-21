@@ -5,7 +5,7 @@ from fastapi import WebSocket
 from fastmcp.server.dependencies import get_http_headers
 from httpx_retries import Retry, RetryTransport
 
-from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
+from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound, wait_for_cdp_ready
 from getgather.client_ip import client_ip_var
 from getgather.config import settings
 
@@ -167,6 +167,11 @@ class FleetBackend:
         # ids; the router does not patch again (see cdp_targets_need_namespacing). Deterministic
         # from CHROMEFLEET_URL + browser_id, so this never returns None — no retry needed.
         return f"{self.cdp_websocket_base()}/cdp/{browser_id}"
+
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        # Fleet exposes a shared relay URL, so readiness must be proven through that relay rather
+        # than inferred from the upstream REST create response.
+        await wait_for_cdp_ready(browser_id, lambda: self.get_cdp_websocket_remote_url(browser_id))
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The external fleet's /cdp proxy already namespaces target ids by browser_id; the

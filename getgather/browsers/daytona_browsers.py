@@ -23,6 +23,7 @@ from getgather.browsers.backend import (
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
     get_page_websocket_debugger_url,
+    wait_for_cdp_ready,
 )
 from getgather.browsers.residential_proxy import get_proxy_config
 from getgather.config import settings
@@ -272,6 +273,10 @@ class DaytonaBackend:
         # retries 10x before giving up.
         cdp_base_url = await self.get_cdp_base_url(browser_id)
         return await get_browser_websocket_debugger_url(cdp_base_url)
+
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        # Daytona create can finish while Chrome and its signed preview route are still starting.
+        await wait_for_cdp_ready(browser_id, lambda: self.get_cdp_websocket_remote_url(browser_id))
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The per-sandbox socket reports raw target ids; the router namespaces them by browser_id

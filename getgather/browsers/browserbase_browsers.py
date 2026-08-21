@@ -323,6 +323,12 @@ class BrowserbaseBackend:
         # discovery step. None for an unknown / already-released session.
         return self._sessions.get(browser_id)
 
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        # create_browser already probes Target.getTargets before returning. Unlike the other
+        # providers, repeating that probe here would open a redundant Browserbase connection.
+        if browser_id not in self._sessions:
+            raise BrowserNotFound(browser_id)
+
     async def resolve_session(self, logical_browser_id: str) -> str | None:
         """Recover a Browserbase session after a GetGather restart or replica hop."""
         cached_id = self._logical_sessions.get(logical_browser_id)

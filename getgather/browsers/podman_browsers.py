@@ -16,6 +16,7 @@ from getgather.browsers.backend import (
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
     get_page_websocket_debugger_url,
+    wait_for_cdp_ready,
 )
 from getgather.browsers.residential_proxy import get_proxy_config
 from getgather.config import settings
@@ -436,6 +437,10 @@ class PodmanBackend:
         # missed boot race (chrome not ready yet) — the router retries 10x before giving up.
         cdp_base_url = await self.get_cdp_base_url(browser_id)
         return await get_browser_websocket_debugger_url(cdp_base_url)
+
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        # Container launch does not imply that Chrome's debugging socket is accepting commands.
+        await wait_for_cdp_ready(browser_id, lambda: self.get_cdp_websocket_remote_url(browser_id))
 
     def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The per-browser socket reports raw target ids; the router namespaces them by browser_id
