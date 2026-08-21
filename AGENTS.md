@@ -4,9 +4,7 @@ This file provides guidance when working with code in this repository.
 
 ## Overview
 
-A FastAPI + FastMCP server (`getgather`) that exposes MCP tools for extracting personal data from many web services (Amazon, Garmin, YouTube, Goodreads, Zillow, Wayfair, Kroger, etc.). It drives a remote [Chrome Fleet](https://github.com/remotebrowser/chromefleet) instance via [zendriver](https://github.com/stephanlensky/zendriver) (CDP). The server itself is stateless; browser sessions live in the Chrome Fleet backend identified by `browser_id`.
-
-**`CHROMEFLEET_URL` is required** — the server exits on startup if unset.
+A FastAPI server (`getgather`) that launches and manages remote, containerized Chrome browsers and exposes their CDP ([Chrome Devtools Protocol](https://chromedevtools.github.io/devtools-protocol/)) sessions over a REST/WebSocket API. It drives browsers via [zendriver](https://github.com/stephanlensky/zendriver) (CDP) across pluggable backends (Podman, Daytona, or an external Chrome Fleet). The server itself is stateless; browser sessions live in the selected backend, identified by `browser_id`.
 
 ## Common Commands
 
@@ -20,73 +18,36 @@ make check-backend-format                 # ruff check + ruff format --check
 make format-backend                       # ruff format + ruff check --fix
 make typecheck                            # pyright . (strict mode) + ty check
 make check-frontend-format                # prettier check on html/js/ts/css/json/md
-make check-yaml-format                    # yamlfix --check (skips mcp-tools.yaml)
+make check-yaml-format                    # yamlfix --check
 
-# Tests (markers: mcp, distill; anything else = unit)
+# Tests (markers: api, webui; anything else = unit)
 make test                                 # unit tests (CI)
-uv run pytest -m "mcp" -s -p no:xdist     # integration vs live server
-uv run pytest -m "distill" -s -p no:xdist # distillation vs Chrome Fleet
-uv run pytest tests/mcp/test_goodreads.py                              # single test file
-uv run pytest tests/mcp/test_goodreads.py::test_goodreads_login_and_get_book_list
-
-# Manual MCP client (fastmcp client against running server)
-uv run python tests/manual.py call-tool --mcp media --tool bbc_get_saved_articles
+uv run pytest -m "api" -s -p no:xdist     # integration vs live server
+uv run pytest tests/test_browser_api_e2e.py                              # single test file
+uv run pytest tests/test_browser_api_e2e.py::TestPageContent::test_page_html
 ```
 
 ## Architecture
 
-### MCP app composition
+### Browser backends
 
-`getgather.main` mounts FastAPI app. `getgather.mcp.main.create_mcp_apps()` builds several MCP ASGI apps from one brand registry:
+`getgather/browsers/backend.py` defines the pluggable backend interface; `getgather/browsers/router.py` mounts the generic `/api/v1/browsers` CRUD API on top of it. The active backend is selected at startup:
 
-- `/mcp` — all brands mounted (`type="all"`)
-- `/mcp-<brand_id>` — one app per brand (e.g. `/mcp-amazon`)
-- `/mcp-<category>` — category bundles defined in `MCP_BUNDLES` (media, books, shopping, sports, food)
+- **Podman** (default) — launches a local container per browser
+- **Daytona** (`BROWSER_BACKEND=daytona`) — an on-demand Daytona sandbox, reached over a signed HTTPS preview URL
+- **External Fleet** (`CHROMEFLEET_URL` set) — proxies to an upstream Chrome Fleet instance; takes precedence over the other two
 
-All brands are registered in `getgather/mcp/mcp-tools.yaml`. `declarative_mcp.py` creates `MCPTool` instances from the YAML config at import time (module-level), populating `MCPTool.registry`. The parent MCP app then `mount()`s each brand MCP with its `brand_id` as namespace, so tools appear as `<brand_id>_<tool_name>` (e.g. `goodreads_get_book_list`).
+### CDP session plumbing
 
-Adding a new brand requires: (1) add a YAML entry in `mcp-tools.yaml` with `id`, `name`, and `tools` list, plus `custom: true` and `module: <module_name>` if it has a custom Python module, (2) if custom, the module must look up its MCPTool via `MCPTool.registry["<brand_id>"]` and register tools with `@brand_mcp.tool`.
-
-### Declarative vs imperative brands
-
-All brands are declared in YAML at `getgather/mcp/mcp-tools.yaml`. `declarative_mcp.create_declarative_mcp_tools()` runs at module level and creates `MCPTool` instances from YAML for every brand. Two registration modes:
-
-- **Declarative** (no `custom: true`): tools are auto-generated from YAML config. The default kind is `remote_zen_dpage_mcp_tool(url, result_key, timeout)` — full sign-in flow via dpage.
-
-- **Custom** (`custom: true`, `module: <name>`): declarative_mcp creates the MCPTool, then dynamically imports the brand module. The module looks up `MCPTool.registry["<brand_id>"]` and uses `@brand_mcp.tool` to register tools with custom logic (post-signin actions, JSON response interception, multi-page flows) via `remote_zen_dpage_with_action(initial_url, action)` where `action` is an `async (page, browser) -> dict`.
-
-### Distillation engine (`zen_distill.py`)
-
-The extraction approach: HTML pattern files in `getgather/mcp/patterns/*.html` contain minimal skeletons with `rb-match="<selector>"` attributes. For each page load, `distill()` batch-extracts all selectors via CDP, finds the best-matching pattern by priority, and renders a "distilled" form. Key markers:
-
-- `rb-match="selector"` — required selector
-- `rb-match-html="selector"` — capture inner HTML instead of text
-- `rb-optional` — don't fail the pattern if missing
-- `rb-priority="N"` — lower wins
-- `rb-domain="example.com"` — only try this pattern on matching hostnames
-- `rb-stop` — pattern signals the flow is finished (terminate)
-- `rb-error="code"` — pattern signals a known error
-- `rb-autoclick` — after fields fill, auto-click
-- `rb-convert="file.json"` — point at a sibling JSON converter for structured output
-- An inline `<script type="application/json">` in the pattern can also define the converter (`rows` selector + `columns` list)
-
-The polling loop (`run_distillation_loop` / `zen_post_dpage`) re-distills repeatedly, autofilling inputs (mapped by `name` to form fields) and submitting when all expected fields are set, until a `rb-stop` pattern matches or timeout.
-
-### dpage sign-in flow
-
-When a tool is called and the user isn't signed in, `remote_zen_dpage_mcp_tool` returns `{url, signin_id, message}`. The client opens the URL in a browser, which renders `dpage/{id}` — a server-proxied form driven by distillation patterns. After sign-in completes (a pattern with `rb-stop` matches), `check_signin` returns SUCCESS and the original tool can be re-called to fetch data. `x-incognito: 1` header opens an ephemeral browser; `x-signin-id` header resumes a specific sign-in browser.
-
-Browser identity: `browser_id` is derived from the auth user (`{sub}-{auth_provider}`) so each user has one persistent remote browser. Incognito browsers get an `E`-prefixed random ID.
+`getgather/browser.py` holds the core zendriver/CDP helpers used across the app: `create_remote_browser`/`terminate_remote_browser`, page lookup/navigation (`get_new_page`, `zen_navigate_with_retry`), and low-level element/selector primitives (`page_query_selector`, `page_batch_extract`). `getgather/cdp_client.py` provides a raw CDP client used to tunnel WebSocket sessions through `GET /api/v1/browsers/{id}/cdp`.
 
 ### Tracing
 
-`getgather/tracing.py` configures Logfire (if `LOGFIRE_TOKEN` set) and a custom `MCPSessionTraceMiddleware` that reparents per-request OTel spans under a session-root span keyed by `mcp-session-id`. The session ID doubles as the trace ID, so it can be pasted into Logfire. This middleware wraps the FastAPI app last so it runs before OTel's FastAPI instrumentation.
+`getgather/tracing.py` configures Logfire (if `LOGFIRE_TOKEN` set) and a `SessionTraceMiddleware` that reparents per-request OTel spans under a session-root span keyed by `x-session-id`. The session ID doubles as the trace ID, so it can be pasted into Logfire. This middleware wraps the FastAPI app last so it runs before OTel's FastAPI instrumentation. `getgather/logs.py`'s `LoggingContextMiddleware` attaches the same session id (and resolved client IP) to loguru's contextvars for every request.
 
 ## Conventions
 
 - Python 3.11+, pyright **strict** mode — avoid `Any` drift, annotate returns
 - ruff lint selects `I, UP045, UP006, UP007` (isort + modern typing) with `line-length = 100`
-- `mcp-tools.yaml` is intentionally excluded from yamlfix — edit it hand-formatted
 - Pre-push hook runs `make check`; don't bypass with `--no-verify`.
-- Pattern files live beside patterns at `getgather/mcp/patterns/` — keep them minimal; they're parsed by BeautifulSoup, not rendered
 - Settings via pydantic `BaseSettings` reads `.env`; see `.env.template` for keys
