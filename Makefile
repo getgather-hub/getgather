@@ -28,7 +28,7 @@ format-yaml:
 
 .PHONY: check-yaml-format
 check-yaml-format:
-	uv run yamlfix --check $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/|mcp-tools\.yaml')
+	uv run yamlfix --check $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/')
 
 .PHONY: format
 format: format-backend format-yaml format-frontend
