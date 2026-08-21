@@ -165,7 +165,7 @@ class TestPageContent:
             except Exception:
                 pass
 
-    def test_page_html_and_distilled(self, client: httpx.Client) -> None:
+    def test_page_html(self, client: httpx.Client) -> None:
         browser_id = "test-page-content"
         self.browser_ids.append(browser_id)
 

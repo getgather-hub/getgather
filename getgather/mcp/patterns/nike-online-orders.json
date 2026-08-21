@@ -1,9 +1,0 @@
-{
-  "rows": "div.sse-order",
-  "columns": [
-    {
-      "name": "product",
-      "selector": "h2[data-testid='productNameLink-headline']"
-    }
-  ]
-}
