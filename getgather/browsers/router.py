@@ -11,6 +11,7 @@ from fastapi.websockets import WebSocketState
 from loguru import logger
 from websockets.exceptions import ConnectionClosed
 
+from getgather.browsers import daytona_probe
 from getgather.browsers.backend import (
     Backend,
     BrowserNotFound,
@@ -148,6 +149,16 @@ def patch_cdp_target(message: str, browser_id: str) -> str:
 
 
 async def websocket_proxy(
+    client_ws: WebSocket, remote_url: str, browser_id: str, patch: bool = True
+) -> None:
+    # The probe wrapper is observation only: on Daytona this relay is a live connection through the
+    # sandbox's preview proxy, so how long it stays open is a candidate answer for "what keeps the
+    # sandbox from auto-stopping". See daytona_probe.
+    with daytona_probe.connection(browser_id, "cdp-relay"):
+        await _websocket_proxy(client_ws, remote_url, browser_id, patch)
+
+
+async def _websocket_proxy(
     client_ws: WebSocket, remote_url: str, browser_id: str, patch: bool = True
 ) -> None:
     # `patch` rewrites target ids to namespace them by browser_id (local backends multiplex many

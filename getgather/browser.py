@@ -19,6 +19,7 @@ from zendriver.core._contradict import ContraDict
 from zendriver.core.config import Config
 from zendriver.core.connection import Connection, ProtocolException
 
+from getgather.browsers import daytona_probe
 from getgather.browsers.fleet_browsers import build_chromefleet_headers, call_chromefleet_api
 from getgather.config import FRIENDLY_CHARS, settings
 
@@ -164,6 +165,10 @@ async def _create_browser_from_cdp_websocket(
                 f"browser_id={browser_id}"
             )
     instance.id = browser_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    # Nothing stops this handle unless a caller reaches terminate_remote_browser, and its CDP
+    # websocket stays open through the sandbox's preview proxy meanwhile. Record it so the probe
+    # can report which caller holds one open past Daytona's idle window.
+    daytona_probe.open_connection(browser_id, "zendriver-cdp")
     return instance
 
 
@@ -245,6 +250,7 @@ async def terminate_remote_browser(browser: zd.Browser) -> None:
     """Terminate an existing remote Chrome via ChromeFleet."""
     browser_id = cast(str, browser.id)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     logger.info(f"Terminating ChromeFleet browser: {browser_id}")
+    daytona_probe.close_connection(browser_id, "zendriver-cdp")
     # no need to raise for error (which would fail the whole process)
     await call_chromefleet_api("DELETE", browser_id, timeout=1.0, retries=0, raise_for_status=False)
 

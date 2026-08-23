@@ -16,6 +16,7 @@ from fastapi import WebSocket
 from loguru import logger
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from getgather.browsers import daytona_probe
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
     BROWSER_SCOPE,
@@ -80,6 +81,7 @@ async def _configure_sandbox_proxy(sandbox: AsyncSandbox, proxy_url: str) -> boo
         "while ! curl -s -o /dev/null -x http://localhost:8119 http://tinyproxy.stats; do sleep 0.1; done",
     ]
     for cmd in cmds:
+        daytona_probe.touch(_probe_id(sandbox), "exec:proxy-config")
         try:
             response = await sandbox.process.exec(cmd)
         except Exception as e:
@@ -98,6 +100,7 @@ async def _get_sandbox_public_ip(
 ) -> str | None:
     cmd = "curl -s --max-time 10 --proxy http://127.0.0.1:8119 https://ip.fly.dev"
     for attempt in range(1, retries + 1):
+        daytona_probe.touch(_probe_id(sandbox), "exec:ip-check", f"attempt={attempt}")
         try:
             response = await sandbox.process.exec(cmd)
             ip = response.result.strip() if response.exit_code == 0 else ""
@@ -154,6 +157,10 @@ def _browser_id_from_name(name: str) -> str:
     return name.removeprefix(BROWSER_NAME_PREFIX)
 
 
+def _probe_id(sandbox: AsyncSandbox) -> str:
+    return _browser_id_from_name(sandbox.name or "")
+
+
 class DaytonaBackend:
     """Launch a Daytona sandbox per browser on demand (no pool).
 
@@ -172,6 +179,7 @@ class DaytonaBackend:
         self.snapshot = snapshot
         self.client = AsyncDaytona(DaytonaConfig(api_key=api_key, api_url=api_url or None))
         self._locks: dict[str, asyncio.Lock] = {}
+        daytona_probe.enable(AUTO_STOP_MINUTES)
 
     @property
     def default_best_of_n(self) -> int:
@@ -216,6 +224,7 @@ class DaytonaBackend:
         self._locks.pop(browser_id, None)
         if sandbox is None:
             return {"status": "not found"}
+        daytona_probe.touch(browser_id, "sandbox.delete")
         await sandbox.delete()
         return {"status": "deleted"}
 
@@ -255,6 +264,7 @@ class DaytonaBackend:
         sandbox = await self._get(_sandbox_name(browser_id))
         if sandbox is None:
             raise BrowserNotFound(browser_id)
+        daytona_probe.touch(browser_id, "signed-url:cdp")
         signed = await sandbox.create_signed_preview_url(
             CDP_PORT, expires_in_seconds=SIGNED_URL_TTL_SECONDS
         )
@@ -312,6 +322,7 @@ class DaytonaBackend:
                 )
                 return None
 
+        daytona_probe.touch(browser_id, "signed-url:vnc", "live view handed out")
         signed = await sandbox.create_signed_preview_url(
             VNC_PORT, expires_in_seconds=SIGNED_URL_TTL_SECONDS
         )
@@ -328,11 +339,13 @@ class DaytonaBackend:
         # no post-start swap here.
         if sandbox.state != "started":
             logger.info(f"Starting Daytona sandbox {name} (state={sandbox.state})")
+            daytona_probe.touch(browser_id, "sandbox.start", f"from={sandbox.state}")
             await sandbox.start()
 
         return sandbox
 
     async def _get_info(self, sandbox: AsyncSandbox) -> dict[str, Any]:
+        daytona_probe.touch(_probe_id(sandbox), "signed-url:cdp")
         signed = await sandbox.create_signed_preview_url(
             CDP_PORT, expires_in_seconds=SIGNED_URL_TTL_SECONDS
         )
@@ -355,6 +368,7 @@ class DaytonaBackend:
             f"cp {CHROME_HISTORY_PATH} /tmp/cf-history.db && "
             "sqlite3 /tmp/cf-history.db 'select MAX(last_visit_time) from urls;'"
         )
+        daytona_probe.touch(_probe_id(sandbox), "exec:history-read")
         try:
             response = await sandbox.process.exec(command)
         except Exception as e:
@@ -375,6 +389,7 @@ class DaytonaBackend:
         return (chromium_time / 1_000_000) - CHROMIUM_EPOCH_OFFSET_SECONDS
 
     async def _get(self, name: str) -> AsyncSandbox | None:
+        daytona_probe.touch(_browser_id_from_name(name), "api.get")
         try:
             return await self.client.get(name)
         except DaytonaNotFoundError:
@@ -410,6 +425,7 @@ class DaytonaBackend:
             auto_delete_interval=TTL_MINUTES,
         )
         logger.info(f"Creating Daytona sandbox {name} from snapshot {self.snapshot}")
+        daytona_probe.touch(_browser_id_from_name(name), "sandbox.create")
         try:
             return await self.client.create(params, timeout=400)
         except DaytonaConflictError:

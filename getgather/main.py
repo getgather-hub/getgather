@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from getgather.browser import create_remote_browser, terminate_remote_browser
+from getgather.browsers import daytona_probe
 from getgather.browsers.router import backend, router as browsers_router
 from getgather.config import PROJECT_DIR, settings
 from getgather.logs import MCPLoggingContextMiddleware
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
                     await backend.cleanup_idle()
                 except Exception as e:
                     logger.error(f"Idle cleanup failed: {e}")
+                # Reads process-local probe state only; issues no backend calls.
+                daytona_probe.report()
 
     background_task = asyncio.create_task(timer_loop())
 
