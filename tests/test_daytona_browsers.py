@@ -38,6 +38,7 @@ def _patch_proxy(monkeypatch: MonkeyPatch, *, ips: list[str | None], proxy_ok: b
 
 class _Sandbox:
     name = "chromium-test"
+    id = "8addf98c-1ba7-4553-bb99-22d5fd73add1"
 
 
 def _fake_sandbox() -> "daytona_browsers.AsyncSandbox":

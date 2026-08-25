@@ -197,7 +197,9 @@ class DaytonaBackend:
             except ProxyVerificationError:
                 # A sandbox that fails proxy verification is unusable (wrong/no egress IP) and
                 # would otherwise sit around until Daytona's auto_stop/auto_delete TTL. Delete now.
-                logger.warning(f"Deleting sandbox {sandbox.name} after proxy verification failure")
+                logger.warning(
+                    f"Deleting sandbox {sandbox.name} (id={sandbox.id}) after proxy verification failure"
+                )
                 await sandbox.delete()
                 raise
             return await self._get_info(sandbox)
@@ -216,6 +218,7 @@ class DaytonaBackend:
         self._locks.pop(browser_id, None)
         if sandbox is None:
             return {"status": "not found"}
+        logger.info(f"Deleting Daytona sandbox {name} (id={sandbox.id})")
         await sandbox.delete()
         return {"status": "deleted"}
 
@@ -411,11 +414,13 @@ class DaytonaBackend:
         )
         logger.info(f"Creating Daytona sandbox {name} from snapshot {self.snapshot}")
         try:
-            return await self.client.create(params, timeout=400)
+            sandbox = await self.client.create(params, timeout=400)
         except DaytonaConflictError:
             # Lost a concurrent create race (same deterministic name); adopt the winner.
             logger.info(f"Daytona sandbox {name} already exists, adopting")
             existing = await self._get(name)
             if existing is None:
                 raise
-            return existing
+            sandbox = existing
+        logger.info(f"Daytona sandbox {name} ready (id={sandbox.id})")
+        return sandbox
