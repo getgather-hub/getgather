@@ -1,6 +1,14 @@
-"""Unit tests for Target purchase-detail URL/identifier resolution.
+"""Guards Target's order-history extraction after the ONLINE endpoint change.
 
-Pure-function tests only — no browser or live server involved.
+_get_purchases navigates to /orders, captures the x-api-key off the page's own
+order-history request, then fetches the list page itself (with retry + per-attempt
+timeout).
+
+ONLINE uses /post_orders/v1/orders/history and its response is already fully
+populated, so its "orders" array is returned verbatim - no detail fetch.
+STORE keeps the legacy lean list + per-order /orders/{id}/store detail fetch.
+
+Pure-function / fake-tab tests only - no browser or live server involved.
 """
 
 # Importing declarative_mcp runs create_declarative_mcp_tools() at import time,
@@ -11,120 +19,112 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock
 
+import pytest
+
 from getgather.mcp import declarative_mcp
 
 assert "target" in declarative_mcp.MCPTool.registry
 
 import getgather.mcp.target as target_module  # noqa: E402
 from getgather.mcp.target import (  # noqa: E402
-    _DETAIL_BASE,  # pyright: ignore[reportPrivateUsage]
-    _ORDER_ID_FIELD,  # pyright: ignore[reportPrivateUsage]
-    _detail_url,  # pyright: ignore[reportPrivateUsage]
-    _fetch_all_details,  # pyright: ignore[reportPrivateUsage]
     _get_purchases,  # pyright: ignore[reportPrivateUsage]
 )
 
 
-def test_online_detail_url_is_unchanged():
-    url = _detail_url("ONLINE", "1234567890")
-    assert url == f"{_DETAIL_BASE}/1234567890"
-
-
-def test_store_detail_url_has_orders_and_store_suffix():
-    url = _detail_url("STORE", "5228-0324-0172-6691")
-    assert url == f"{_DETAIL_BASE}/orders/5228-0324-0172-6691/store"
-
-
-def test_order_id_field_mapping():
-    assert _ORDER_ID_FIELD == {"ONLINE": "order_number", "STORE": "store_receipt_id"}
-
-
 class _FakeTab:
-    """Captures the JS handed to evaluate() and returns a canned result."""
+    """Returns queued evaluate() results in order, recording the JS handed to each call."""
 
-    def __init__(self, result: Any) -> None:
-        self.result = result
-        self.last_js_code: str | None = None
+    def __init__(self, results: list[Any]) -> None:
+        self.results = list(results)
+        self.evaluate_calls: list[str] = []
 
     async def evaluate(self, js_code: str, return_by_value: bool = True) -> Any:
-        self.last_js_code = js_code
-        return self.result
-
-
-def test_fetch_all_details_builds_store_url_in_js():
-    fake_page = _FakeTab([{"store_receipt_id": "R1", "unit_price": "9.99"}])
-    result = asyncio.run(
-        _fetch_all_details(fake_page, "STORE", ["5228-0324-0172-6691"], "test-api-key")  # type: ignore[arg-type]
-    )
-    assert result == [{"store_receipt_id": "R1", "unit_price": "9.99"}]
-    assert fake_page.last_js_code is not None
-    assert "/orders/5228-0324-0172-6691/store" in fake_page.last_js_code
-
-
-def test_fetch_all_details_builds_online_url_in_js():
-    fake_page = _FakeTab([{"order_number": "O1"}])
-    result = asyncio.run(
-        _fetch_all_details(fake_page, "ONLINE", ["1234567890"], "test-api-key")  # type: ignore[arg-type]
-    )
-    assert result == [{"order_number": "O1"}]
-    assert fake_page.last_js_code is not None
-    assert "post_orders/v1/1234567890" in fake_page.last_js_code
-    assert "/orders/" not in fake_page.last_js_code
+        self.evaluate_calls.append(js_code)
+        return self.results.pop(0)
 
 
 async def _run_get_purchases(
     monkeypatch: Any, order_purchase_type: str, orders: list[dict[str, Any]]
 ):
     monkeypatch.setattr(target_module, "zen_navigate_with_retry", AsyncMock(return_value=None))
-
-    # ONLINE + page 1 reuses this intercepted page1 payload directly (see _get_purchases);
-    # every other case calls the mocked _fetch_list_page below instead.
-    intercept_page = _FakeTab({
-        "page1": {"orders": orders, "total_pages": 1},
-        "x_api_key": "test-api-key",
-    })
-
-    fetch_list_page_mock = AsyncMock(return_value={"orders": orders, "total_pages": 1})
-    monkeypatch.setattr(target_module, "_fetch_list_page", fetch_list_page_mock)
-
-    fetch_all_details_mock = AsyncMock(return_value=[{**o, "unit_price": "9.99"} for o in orders])
-    monkeypatch.setattr(target_module, "_fetch_all_details", fetch_all_details_mock)
-
-    result = await _get_purchases(intercept_page, 1, order_purchase_type)  # type: ignore[arg-type]
-    return result, fetch_all_details_mock
+    tab = _FakeTab(["test-api-key", {"orders": orders, "total_pages": 1}])
+    result = await _get_purchases(tab, 1, order_purchase_type)  # type: ignore[arg-type]
+    return result, tab
 
 
-def test_store_purchases_now_hit_detail_fetch(monkeypatch: Any):
-    orders = [{"store_receipt_id": "R1"}, {"store_receipt_id": "R2"}]
-    result, fetch_all_details_mock = asyncio.run(_run_get_purchases(monkeypatch, "STORE", orders))
+def test_key_capture_watches_both_list_endpoints(monkeypatch: Any):
+    _result, tab = asyncio.run(_run_get_purchases(monkeypatch, "ONLINE", []))
 
-    # full replace: target_purchases comes from the detail fetch, not the raw list orders
-    assert result["target_purchases"] == [
-        {"store_receipt_id": "R1", "unit_price": "9.99"},
-        {"store_receipt_id": "R2", "unit_price": "9.99"},
-    ]
-    fetch_all_details_mock.assert_awaited_once()
-    call_args = fetch_all_details_mock.await_args
-    assert call_args is not None
-    _page, order_purchase_type, identifiers, _x_api_key = call_args.args
-    assert order_purchase_type == "STORE"
-    assert identifiers == ["R1", "R2"]
+    capture_js = tab.evaluate_calls[0]
+    assert "/post_orders/v1/orders/history" in capture_js
+    assert "/guest_order_aggregations/v1/order_history" in capture_js
+    assert "x-api-key" in capture_js
 
 
-def test_online_purchases_still_use_order_number(monkeypatch: Any):
-    orders = [{"order_number": "O1"}]
-    result, fetch_all_details_mock = asyncio.run(_run_get_purchases(monkeypatch, "ONLINE", orders))
+def test_online_uses_new_post_orders_history_endpoint_with_captured_key(monkeypatch: Any):
+    _result, tab = asyncio.run(_run_get_purchases(monkeypatch, "ONLINE", []))
 
-    assert result["target_purchases"] == [{"order_number": "O1", "unit_price": "9.99"}]
-    call_args = fetch_all_details_mock.await_args
-    assert call_args is not None
-    _page, order_purchase_type, identifiers, _x_api_key = call_args.args
-    assert order_purchase_type == "ONLINE"
-    assert identifiers == ["O1"]
+    list_js = tab.evaluate_calls[1]
+    assert "api.target.com/post_orders/v1/orders/history" in list_js
+    assert "order_purchase_type=ONLINE" in list_js
+    assert "test-api-key" in list_js
+    assert "credentials: 'include'" in list_js
+    assert "https://www.target.com/" in list_js
+
+
+def test_online_returns_list_orders_verbatim_without_detail_fetch(monkeypatch: Any):
+    order = {"order_number": "123", "order_lines": [{"item": {"tcin": "t1"}}]}
+    result, tab = asyncio.run(_run_get_purchases(monkeypatch, "ONLINE", [order]))
+
+    assert result["target_purchases"] == [order]
+    # Only key-capture + list fetch ran - no detail fetch.
+    assert len(tab.evaluate_calls) == 2
+
+
+def test_store_still_fetches_detail_per_order(monkeypatch: Any):
+    monkeypatch.setattr(target_module, "zen_navigate_with_retry", AsyncMock(return_value=None))
+    tab = _FakeTab([
+        "test-api-key",
+        {"orders": [{"store_receipt_id": "R1"}], "total_pages": 1},
+        [{"store_receipt_id": "R1", "unit_price": "9.99"}],
+    ])
+
+    result = asyncio.run(_get_purchases(tab, 1, "STORE"))  # type: ignore[arg-type]
+
+    assert result["target_purchases"] == [{"store_receipt_id": "R1", "unit_price": "9.99"}]
+    detail_js = tab.evaluate_calls[2]
+    assert "orders/R1/store" in detail_js
 
 
 def test_store_with_no_orders_skips_detail_fetch(monkeypatch: Any):
-    result, fetch_all_details_mock = asyncio.run(_run_get_purchases(monkeypatch, "STORE", []))
+    result, tab = asyncio.run(_run_get_purchases(monkeypatch, "STORE", []))
 
     assert result["target_purchases"] == []
-    fetch_all_details_mock.assert_not_awaited()
+    # Only key-capture + list fetch ran - no orders means no detail fetch.
+    assert len(tab.evaluate_calls) == 2
+
+
+def test_missing_api_key_raises(monkeypatch: Any):
+    monkeypatch.setattr(target_module, "zen_navigate_with_retry", AsyncMock(return_value=None))
+    tab = _FakeTab(["", {"orders": [], "total_pages": 1}])
+
+    with pytest.raises(RuntimeError, match="x-api-key missing"):
+        asyncio.run(_get_purchases(tab, 1, "ONLINE"))  # type: ignore[arg-type]
+
+
+def test_list_fetch_retries_then_raises_on_repeated_failure(monkeypatch: Any):
+    monkeypatch.setattr(target_module, "zen_navigate_with_retry", AsyncMock(return_value=None))
+
+    class _FailingTab(_FakeTab):
+        async def evaluate(self, js_code: str, return_by_value: bool = True) -> Any:
+            self.evaluate_calls.append(js_code)
+            if len(self.evaluate_calls) == 1:
+                return "test-api-key"
+            raise RuntimeError("HTTP 500")
+
+    tab = _FailingTab([])
+    with pytest.raises(RuntimeError, match="list fetch failed after"):
+        asyncio.run(_get_purchases(tab, 1, "ONLINE"))  # type: ignore[arg-type]
+
+    # 1 key-capture call + 3 retried list-fetch attempts.
+    assert len(tab.evaluate_calls) == 1 + target_module._FETCH_RETRIES  # pyright: ignore[reportPrivateUsage]
