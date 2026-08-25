@@ -5,7 +5,7 @@ from fastapi import WebSocket
 from fastmcp.server.dependencies import get_http_headers
 from httpx_retries import Retry, RetryTransport
 
-from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
+from getgather.browsers.backend import BROWSER_SCOPE, CDP_WS_PING_INTERVAL_SECONDS, BrowserNotFound
 from getgather.client_ip import client_ip_var
 from getgather.config import settings
 
@@ -165,6 +165,9 @@ class FleetBackend:
         # ids; the router does not patch again (see cdp_targets_need_namespacing). Deterministic
         # from CHROMEFLEET_URL + browser_id, so this never returns None — no retry needed.
         return f"{self.cdp_websocket_base()}/cdp/{browser_id}"
+
+    def cdp_ws_ping_interval(self) -> float | None:
+        return CDP_WS_PING_INTERVAL_SECONDS
 
     def cdp_targets_need_namespacing(self) -> bool:
         # The external fleet's /cdp proxy already namespaces target ids by browser_id; the

@@ -12,6 +12,7 @@ from loguru import logger
 from getgather.browsers.backend import (
     BROWSER_NAME_PREFIX,
     BROWSER_SCOPE,
+    CDP_WS_PING_INTERVAL_SECONDS,
     BrowserNotFound,
     ProxyVerificationError,
     get_browser_websocket_debugger_url,
@@ -436,6 +437,9 @@ class PodmanBackend:
         # missed boot race (chrome not ready yet) — the router retries 10x before giving up.
         cdp_base_url = await self.get_cdp_base_url(browser_id)
         return await get_browser_websocket_debugger_url(cdp_base_url)
+
+    def cdp_ws_ping_interval(self) -> float | None:
+        return CDP_WS_PING_INTERVAL_SECONDS
 
     def cdp_targets_need_namespacing(self) -> bool:
         # The per-browser socket reports raw target ids; the router namespaces them by browser_id

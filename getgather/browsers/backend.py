@@ -8,6 +8,9 @@ from nanoid import generate
 
 from getgather.config import FRIENDLY_CHARS, settings
 
+# Default websocket keepalive for CDP sockets.
+CDP_WS_PING_INTERVAL_SECONDS = 60
+
 # Shared name prefix: a browser with id `abc` is a podman container / Daytona sandbox named
 # `chromium-abc`. Both local backends derive names and parse ids from this single prefix.
 BROWSER_NAME_PREFIX = "chromium-"
@@ -245,6 +248,14 @@ class Backend(Protocol):
         Fleet, the per-browser /json/version discovery for Podman/Daytona). Returns None when
         the URL can't (yet) be resolved."""
 
+    def cdp_ws_ping_interval(self) -> float | None:
+        """Seconds between websocket keepalive pings on CDP sockets opened against this backend,
+        or None to disable pings entirely. Owned by each backend because it is a property of the
+        hop in front of Chrome, not of CDP: Daytona fronts it with a signed HTTPS preview proxy
+        that drops sockets carrying ping frames. Disabling pings costs dead-peer detection — a
+        half-open socket hangs until a read/open timeout instead of failing fast."""
+        ...
+
     def cdp_targets_need_namespacing(self) -> bool:
         """Whether `websocket_proxy` should rewrite target ids to namespace them by `browser_id`
         when relaying to this backend's URL. True for backends that hand back a single browser's
@@ -272,6 +283,16 @@ class Backend(Protocol):
     async def get_vnc_endpoint(self, browser_id: str) -> tuple[str, int] | None: ...
 
     async def get_live_view_url(self, browser_id: str) -> str | None: ...
+
+
+_backend: Backend | None = None
+
+
+def get_backend() -> Backend:
+    global _backend
+    if _backend is None:
+        _backend = create_backend()
+    return _backend
 
 
 def create_backend() -> Backend:

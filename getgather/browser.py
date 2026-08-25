@@ -19,6 +19,7 @@ from zendriver.core._contradict import ContraDict
 from zendriver.core.config import Config
 from zendriver.core.connection import Connection, ProtocolException
 
+from getgather.browsers.backend import get_backend
 from getgather.browsers.fleet_browsers import build_chromefleet_headers, call_chromefleet_api
 from getgather.config import FRIENDLY_CHARS, settings
 
@@ -41,6 +42,7 @@ def _traced_websocket_connect(*args: Any, **kwargs: Any) -> Any:
         merged.update(carrier)
     kwargs["additional_headers"] = merged
     kwargs.setdefault("open_timeout", settings.CHROMEFLEET_CDP_OPEN_TIMEOUT_SECONDS)
+    kwargs.setdefault("ping_interval", get_backend().cdp_ws_ping_interval())
 
     logger.info(
         "CDP websocket headers attached",
