@@ -250,10 +250,7 @@ class Backend(Protocol):
 
     def cdp_ws_ping_interval(self) -> float | None:
         """Seconds between websocket keepalive pings on CDP sockets opened against this backend,
-        or None to disable pings entirely. Owned by each backend because it is a property of the
-        hop in front of Chrome, not of CDP: Daytona fronts it with a signed HTTPS preview proxy
-        that drops sockets carrying ping frames. Disabling pings costs dead-peer detection — a
-        half-open socket hangs until a read/open timeout instead of failing fast."""
+        or None to disable pings entirely."""
         ...
 
     def cdp_targets_need_namespacing(self) -> bool:
