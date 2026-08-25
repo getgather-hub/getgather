@@ -356,7 +356,9 @@ class DaytonaBackend:
             "hostname": sandbox.name,
             "cdp_url": signed.url,  # public, internet-reachable; bearer secret (see SIGNED_URL_TTL_SECONDS)
             "app_state": sandbox.state,
-            "last_activity_timestamp": await self._get_last_activity(sandbox),
+            # Reading Chrome's History DB uses process.exec, which Daytona counts as sandbox
+            # activity. Status polling must not extend the sandbox lifecycle.
+            "last_activity_timestamp": None,
         }
 
     async def _get_last_activity(self, sandbox: AsyncSandbox) -> float | None:
