@@ -81,13 +81,17 @@ async def _configure_sandbox_proxy(sandbox: AsyncSandbox, proxy_url: str) -> boo
     ]
     for cmd in cmds:
         try:
+            logger.info(f"Daytona toolbox exec sandbox={sandbox.name} id={sandbox.id}: {cmd!r}")
             response = await sandbox.process.exec(cmd)
         except Exception as e:
-            logger.warning(f"Proxy config failed on {sandbox.name}: {type(e).__name__}: {e}")
+            logger.warning(
+                f"Proxy config failed on {sandbox.name} (id={sandbox.id}): {type(e).__name__}: {e}"
+            )
             return False
         if response.exit_code != 0:
             logger.warning(
-                f"Proxy config exit={response.exit_code} on {sandbox.name}: cmd={cmd!r} stderr={response.result!r}"
+                f"Proxy config exit={response.exit_code} on {sandbox.name} (id={sandbox.id}): "
+                f"cmd={cmd!r} stderr={response.result!r}"
             )
             return False
     return True
@@ -99,15 +103,21 @@ async def _get_sandbox_public_ip(
     cmd = "curl -s --max-time 10 --proxy http://127.0.0.1:8119 https://ip.fly.dev"
     for attempt in range(1, retries + 1):
         try:
+            logger.info(
+                f"Daytona toolbox exec sandbox={sandbox.name} id={sandbox.id} "
+                f"(IP check {attempt}/{retries}): {cmd!r}"
+            )
             response = await sandbox.process.exec(cmd)
             ip = response.result.strip() if response.exit_code == 0 else ""
             if ip:
                 return ip
         except Exception as e:
-            logger.debug(f"IP check {attempt}/{retries} on {sandbox.name} failed: {e}")
+            logger.debug(
+                f"IP check {attempt}/{retries} on {sandbox.name} (id={sandbox.id}) failed: {e}"
+            )
         if attempt < retries:
             await asyncio.sleep(retry_delay)
-    logger.warning(f"IP check on {sandbox.name} failed after {retries} attempts")
+    logger.warning(f"IP check on {sandbox.name} (id={sandbox.id}) failed after {retries} attempts")
     return None
 
 
@@ -333,7 +343,7 @@ class DaytonaBackend:
         # (see _create), so both a fresh create and a resumed start boot the right browser directly —
         # no post-start swap here.
         if sandbox.state != "started":
-            logger.info(f"Starting Daytona sandbox {name} (state={sandbox.state})")
+            logger.info(f"Starting Daytona sandbox {name} (id={sandbox.id}, state={sandbox.state})")
             await sandbox.start()
 
         return sandbox
@@ -362,16 +372,19 @@ class DaytonaBackend:
             "sqlite3 /tmp/cf-history.db 'select MAX(last_visit_time) from urls;'"
         )
         try:
+            logger.info(f"Daytona toolbox exec sandbox={sandbox.name} id={sandbox.id}: {command!r}")
             response = await sandbox.process.exec(command)
         except Exception as e:
             logger.warning(
-                f"Unexpected error fetching last activity for {sandbox.name}: {type(e).__name__}: {e}"
+                f"Unexpected error fetching last activity for {sandbox.name} (id={sandbox.id}): "
+                f"{type(e).__name__}: {e}"
             )
             return None
         output = response.result.strip()
         if response.exit_code != 0 or not output:
             logger.warning(
-                f"Failed to fetch last activity for {sandbox.name}: exit={response.exit_code} result={output!r}"
+                f"Failed to fetch last activity for {sandbox.name} (id={sandbox.id}): "
+                f"exit={response.exit_code} result={output!r}"
             )
             return None
         try:
