@@ -113,6 +113,9 @@ class _FakeCDPBackend:
     async def get_cdp_websocket_remote_url(self, browser_id: str) -> str:
         return "ws://remote/devtools/browser/xyz"
 
+    def cdp_ws_ping_interval(self) -> float | None:
+        return 60
+
     def cdp_targets_need_namespacing(self) -> bool:
         return True
 
