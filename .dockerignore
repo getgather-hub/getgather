@@ -1,0 +1,19 @@
+# Allowlist: the Dockerfile copies only these paths, and the repo root holds
+# ~750 MB of local-only state (.claude, .venv, .git, data) that would otherwise
+# be uploaded to the builder on every deploy.
+*
+
+!Dockerfile
+!.dockerignore
+!pyproject.toml
+!uv.lock
+!README.md
+!getgather/
+!getgather/**
+!tests/
+!tests/**
+
+# Build artifacts inside the allowed trees
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
