@@ -15,7 +15,7 @@ from getgather.browsers.backend import (
     Backend,
     BrowserNotFound,
     best_of_n,
-    create_backend,
+    get_backend,
     new_browser_id,
 )
 from getgather.cdp_client import CDPClient, open_cdp_url
@@ -23,7 +23,7 @@ from getgather.config import settings
 
 router = APIRouter()
 
-backend: Backend = create_backend()
+backend: Backend = get_backend()
 logger.info(f"Using browser backend: {backend.__class__.__name__}")
 
 
@@ -156,7 +156,7 @@ async def websocket_proxy(
     try:
         async with websockets.connect(
             remote_url,
-            ping_interval=60,
+            ping_interval=backend.cdp_ws_ping_interval(),
             ping_timeout=30,
             close_timeout=10,
             max_size=10 * 1024 * 1024,

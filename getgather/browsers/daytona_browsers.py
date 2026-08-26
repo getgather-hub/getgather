@@ -273,6 +273,9 @@ class DaytonaBackend:
         cdp_base_url = await self.get_cdp_base_url(browser_id)
         return await get_browser_websocket_debugger_url(cdp_base_url)
 
+    def cdp_ws_ping_interval(self) -> float | None:
+        return None
+
     def cdp_targets_need_namespacing(self) -> bool:
         # The per-sandbox socket reports raw target ids; the router namespaces them by browser_id
         # so the devtools route can route /devtools/{browser_id@page_id} back to this sandbox.

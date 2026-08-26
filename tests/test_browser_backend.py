@@ -7,7 +7,7 @@ from pytest import MonkeyPatch
 
 from getgather.browser import _setup_cdp_url  # pyright: ignore[reportPrivateUsage]
 from getgather.browsers import router as browsers_router
-from getgather.browsers.backend import create_backend
+from getgather.browsers.backend import CDP_WS_PING_INTERVAL_SECONDS, create_backend
 from getgather.browsers.fleet_browsers import FleetBackend
 from getgather.browsers.podman_browsers import PodmanBackend
 from getgather.config import settings
@@ -22,6 +22,12 @@ def test_create_backend_defaults_to_podman_without_url(monkeypatch: MonkeyPatch)
     monkeypatch.setattr(settings, "CHROMEFLEET_URL", "")
     monkeypatch.setattr(settings, "BROWSER_BACKEND", "podman")
     assert isinstance(create_backend(), PodmanBackend)
+
+
+def test_cdp_ws_ping_interval_defaults_to_keepalive(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "CHROMEFLEET_URL", "http://localhost:8300")
+    assert FleetBackend().cdp_ws_ping_interval() == CDP_WS_PING_INTERVAL_SECONDS
+    assert PodmanBackend().cdp_ws_ping_interval() == CDP_WS_PING_INTERVAL_SECONDS
 
 
 def test_fleet_cdp_websocket_base_rewrites_scheme(monkeypatch: MonkeyPatch) -> None:
@@ -112,6 +118,9 @@ class _FakeCDPBackend:
 
     async def get_cdp_websocket_remote_url(self, browser_id: str) -> str:
         return "ws://remote/devtools/browser/xyz"
+
+    def cdp_ws_ping_interval(self) -> float | None:
+        return 60
 
     def cdp_targets_need_namespacing(self) -> bool:
         return True
