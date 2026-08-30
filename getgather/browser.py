@@ -241,6 +241,22 @@ async def create_remote_browser(
     return browser
 
 
+async def close_remote_browser(browser: zd.Browser | None) -> None:
+    """Drop our CDP websockets for `browser`. The remote browser itself keeps running."""
+    if browser is None:
+        return
+
+    connections: list[Connection] = list(browser.targets)
+    if browser.connection is not None:
+        connections.append(browser.connection)
+
+    for connection in connections:
+        try:
+            await connection.aclose()
+        except Exception as e:
+            logger.debug(f"Ignored error closing CDP connection: {e}")
+
+
 async def terminate_remote_browser(browser: zd.Browser) -> None:
     """Terminate an existing remote Chrome via ChromeFleet."""
     browser_id = cast(str, browser.id)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
