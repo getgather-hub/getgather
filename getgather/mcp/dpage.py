@@ -18,6 +18,7 @@ from zendriver.core.connection import ProtocolException
 
 from getgather.browser import (
     ElementConfig,
+    close_remote_browser,
     create_remote_browser,
     find_browser_tab,
     get_new_page,
@@ -288,11 +289,14 @@ async def post_dpage(id: str, request: Request) -> HTMLResponse:
     if browser is None:
         raise HTTPException(status_code=404, detail="Remote browser not found")
 
-    page = find_browser_tab(browser, signin_id.target_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+    try:
+        page = find_browser_tab(browser, signin_id.target_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail="Page not found")
 
-    return await zen_post_dpage(page, id, request)
+        return await zen_post_dpage(page, id, request)
+    finally:
+        await close_remote_browser(browser)
 
 
 def is_local_address(host: str) -> bool:
