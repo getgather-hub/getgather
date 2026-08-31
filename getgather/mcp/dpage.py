@@ -204,31 +204,36 @@ async def dpage_check(id: str):
     path = os.path.join(os.path.dirname(__file__), "patterns", "**/*.html")
     probe_patterns = load_distillation_patterns(path)
 
-    for iteration in range(max):
-        logger.debug(f"Checking dpage {id}: {iteration + 1} of {max}")
-        await asyncio.sleep(TICK)
+    try:
+        for iteration in range(max):
+            logger.debug(f"Checking dpage {id}: {iteration + 1} of {max}")
+            await asyncio.sleep(TICK)
 
-        if browser is None:
-            browser = await get_remote_browser(signin_id.browser_id)
-        if browser is None:
-            continue
+            if browser is None:
+                browser = await get_remote_browser(signin_id.browser_id)
+            if browser is None:
+                continue
 
-        page = find_browser_tab(browser, signin_id.target_id)
-        if page is None:
-            browser = None
-            continue
+            page = find_browser_tab(browser, signin_id.target_id)
+            if page is None:
+                await close_remote_browser(browser)
+                browser = None
+                continue
 
-        try:
-            terminated = await _probe_page(
-                page=page, browser=browser, timeout=2, patterns=probe_patterns
-            )
-            if terminated:
-                return True
-        except Exception as e:
-            logger.warning(f"Remote probe failed for {id}: {e}")
-            browser = None
+            try:
+                terminated = await _probe_page(
+                    page=page, browser=browser, timeout=2, patterns=probe_patterns
+                )
+                if terminated:
+                    return True
+            except Exception as e:
+                logger.warning(f"Remote probe failed for {id}: {e}")
+                await close_remote_browser(browser)
+                browser = None
 
-    return None
+        return None
+    finally:
+        await close_remote_browser(browser)
 
 
 async def dpage_finalize(id: str):
