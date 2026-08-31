@@ -18,7 +18,7 @@ from zendriver.core.connection import ProtocolException
 
 from getgather.browser import (
     ElementConfig,
-    close_remote_browser,
+    close_cdp_connections,
     create_remote_browser,
     find_browser_tab,
     get_new_page,
@@ -216,7 +216,7 @@ async def dpage_check(id: str):
 
             page = find_browser_tab(browser, signin_id.target_id)
             if page is None:
-                await close_remote_browser(browser)
+                await close_cdp_connections(browser)
                 browser = None
                 continue
 
@@ -228,12 +228,12 @@ async def dpage_check(id: str):
                     return True
             except Exception as e:
                 logger.warning(f"Remote probe failed for {id}: {e}")
-                await close_remote_browser(browser)
+                await close_cdp_connections(browser)
                 browser = None
 
         return None
     finally:
-        await close_remote_browser(browser)
+        await close_cdp_connections(browser)
 
 
 async def dpage_finalize(id: str):
@@ -301,7 +301,7 @@ async def post_dpage(id: str, request: Request) -> HTMLResponse:
 
         return await zen_post_dpage(page, id, request)
     finally:
-        await close_remote_browser(browser)
+        await close_cdp_connections(browser)
 
 
 def is_local_address(host: str) -> bool:

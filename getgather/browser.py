@@ -241,8 +241,12 @@ async def create_remote_browser(
     return browser
 
 
-async def close_remote_browser(browser: zd.Browser | None) -> None:
-    """Drop our CDP websockets for `browser`. The remote browser itself keeps running."""
+async def close_cdp_connections(browser: zd.Browser | None) -> None:
+    """Close our CDP websockets to `browser`: the browser socket and every page target.
+
+    Only the sockets. No CDP command is sent, so the remote browser keeps running with all
+    its tabs and a later `get_remote_browser` reconnects to the same session. 
+    """
     if browser is None:
         return
 
