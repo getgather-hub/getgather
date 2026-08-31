@@ -2,12 +2,13 @@ import asyncio
 import json
 from typing import Any
 
+import pytest
 import websockets
 from pytest import MonkeyPatch
 
 from getgather.browser import _setup_cdp_url  # pyright: ignore[reportPrivateUsage]
 from getgather.browsers import router as browsers_router
-from getgather.browsers.backend import create_backend
+from getgather.browsers.backend import create_backend, wait_for_cdp_ready
 from getgather.browsers.fleet_browsers import FleetBackend
 from getgather.browsers.podman_browsers import PodmanBackend
 from getgather.config import settings
@@ -43,6 +44,38 @@ def test_fleet_relay_url_matches_internal_cdp_url(monkeypatch: MonkeyPatch) -> N
 def test_local_backend_opts_out_of_relay() -> None:
     # None signals the router to use the per-browser /json/version flow instead of a relay.
     assert PodmanBackend().cdp_websocket_base() is None
+
+
+@pytest.mark.asyncio
+async def test_wait_for_cdp_ready_sends_real_cdp_command(monkeypatch: MonkeyPatch) -> None:
+    from getgather import cdp_client
+
+    commands: list[str] = []
+    closed = False
+
+    class _ReadyClient:
+        async def send(self, method: str) -> dict[str, Any]:
+            commands.append(method)
+            return {"targetInfos": []}
+
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    async def open_ready_client(url: str, timeout: float | None = None) -> _ReadyClient:
+        assert url == "wss://provider.invalid/cdp"
+        assert timeout == 10.0
+        return _ReadyClient()
+
+    async def resolve_url() -> str:
+        return "wss://provider.invalid/cdp"
+
+    monkeypatch.setattr(cdp_client, "open_cdp_url", open_ready_client)
+
+    await wait_for_cdp_ready("browser-id", resolve_url)
+
+    assert commands == ["Target.getTargets"]
+    assert closed is True
 
 
 def test_create_browser_auto_name_starts_with_b(monkeypatch: MonkeyPatch) -> None:
@@ -113,7 +146,8 @@ class _FakeCDPBackend:
     async def get_cdp_websocket_remote_url(self, browser_id: str) -> str:
         return "ws://remote/devtools/browser/xyz"
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
+        del browser_id
         return True
 
 

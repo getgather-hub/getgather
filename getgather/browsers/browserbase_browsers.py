@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import websockets
@@ -108,7 +108,7 @@ async def websocket_proxy_attached(
                 except (WebSocketDisconnect, RuntimeError):
                     logger.info("[CDP] Client disconnected")
                 except Exception as e:
-                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] client_to_remote error: {type(e).__name__}")
 
             async def remote_to_client() -> None:
                 try:
@@ -136,7 +136,7 @@ async def websocket_proxy_attached(
                 except ConnectionClosed as e:
                     logger.info(f"[CDP] Remote disconnected: code={e.code} reason={e.reason}")
                 except Exception as e:
-                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}: {e}")
+                    logger.error(f"[CDP] remote_to_client error: {type(e).__name__}")
 
             tasks = [
                 asyncio.create_task(client_to_remote()),
@@ -150,12 +150,12 @@ async def websocket_proxy_attached(
                 except (asyncio.CancelledError, Exception):
                     pass
             return
-    except OSError as e:
-        logger.warning(f"[CDP] Attach to {target_id} failed (OSError): {e}")
+    except OSError:
+        logger.warning(f"[CDP] Attach to {target_id} failed (OSError)")
     except InvalidStatus as e:
         logger.warning(f"[CDP] Attach to {target_id} rejected with HTTP {e.response.status_code}")
     except Exception as e:
-        logger.warning(f"[CDP] Attach to {target_id} failed ({type(e).__name__}): {e}")
+        logger.warning(f"[CDP] Attach to {target_id} failed ({type(e).__name__})")
 
     if client_ws.client_state == WebSocketState.CONNECTED:
         await client_ws.close(code=4502, reason="Remote server unreachable")
@@ -170,8 +170,9 @@ class BrowserbaseBackend:
 
     Only `create_browser` is implemented: it POSTs to the Browserbase `/v1/sessions`
     endpoint with the `x-bb-api-key` header (read from the `BROWSERBASE_API_KEY` env var)
-    and stores the returned `id -> connectUrl` mapping in an in-memory hashmap so the
-    CDP proxy in `router.py` can later route `/cdp/<id>` traffic to the right connectUrl.
+    and stores the returned `id -> connectUrl` mapping locally. It also tags sessions with the
+    routed GetGather browser ID, allowing another process to recover the assigned ID and
+    connectUrl from Browserbase after a restart or replica hop.
 
     The Browserbase-assigned session `id` is returned as the `browser_id`, ignoring the
     caller-supplied id (Browserbase creates its own). The router's `POST /api/v1/browsers`
@@ -183,6 +184,7 @@ class BrowserbaseBackend:
     def __init__(self) -> None:
         # browser_id -> connectUrl (wss://connect.usw2.browserbase.com/?signingKey=...)
         self._sessions: dict[str, str] = {}
+        self._logical_sessions: dict[str, str] = {}
 
     async def shutdown(self) -> None:
         return None
@@ -203,7 +205,10 @@ class BrowserbaseBackend:
         # keepAlive keeps the session running between CDP connections / after disconnects.
         # Without it, Browserbase ends the session the moment the first WS drops, and any
         # subsequent connect to the same signingKey returns HTTP 410 Gone.
-        body: dict[str, Any] = {"keepAlive": True}
+        body: dict[str, Any] = {
+            "keepAlive": True,
+            "userMetadata": {"getgatherBrowserId": browser_id},
+        }
         proxy_config = await get_proxy_config(origin_ip, target_domain, settings)
         if proxy_config:
             proxy_url = proxy_config.get_proxy_url(browser_id)
@@ -219,7 +224,9 @@ class BrowserbaseBackend:
         bb_id = str(data["id"])
         connect_url = str(data["connectUrl"])
         self._sessions[bb_id] = connect_url
-        logger.info(f"Browserbase session created: id={bb_id} connectUrl={connect_url}")
+        self._logical_sessions[browser_id] = bb_id
+        # connectUrl embeds a signing key and is a bearer secret; never log it.
+        logger.info(f"Browserbase session created: id={bb_id}")
         await self._wait_until_cdp_ready(connect_url, bb_id)
         return {"browser_id": bb_id, "status": "created", "ip": None}
 
@@ -279,8 +286,7 @@ class BrowserbaseBackend:
             except OSError as e:
                 last_exc = e
                 logger.warning(
-                    f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} "
-                    f"failed (OSError): {e}"
+                    f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} failed (OSError)"
                 )
             except InvalidStatus as e:
                 last_exc = e
@@ -292,13 +298,14 @@ class BrowserbaseBackend:
                 last_exc = e
                 logger.warning(
                     f"[CDP] Readiness probe {attempt}/{attempts} for {browser_id} "
-                    f"failed ({type(e).__name__}): {e}"
+                    f"failed ({type(e).__name__})"
                 )
 
             if attempt < attempts:
                 await asyncio.sleep(delay)
 
-        logger.error(f"[CDP] Browser {browser_id} not ready after {attempts} probes: {last_exc}")
+        error_name = type(last_exc).__name__ if last_exc is not None else "UnknownError"
+        logger.error(f"[CDP] Browser {browser_id} not ready after {attempts} probes: {error_name}")
         # Don't hand back a dead id — release the upstream session and surface the failure.
         try:
             await self.delete_browser(browser_id)
@@ -316,9 +323,87 @@ class BrowserbaseBackend:
         # discovery step. None for an unknown / already-released session.
         return self._sessions.get(browser_id)
 
-    def cdp_targets_need_namespacing(self) -> bool:
+    async def wait_until_cdp_ready(self, browser_id: str) -> None:
+        # create_browser already probes Target.getTargets before returning. Unlike the other
+        # providers, repeating that probe here would open a redundant Browserbase connection.
+        if browser_id not in self._sessions:
+            raise BrowserNotFound(browser_id)
+
+    async def resolve_session(self, logical_browser_id: str) -> str | None:
+        """Recover a Browserbase session after a GetGather restart or replica hop."""
+        cached_id = self._logical_sessions.get(logical_browser_id)
+        if cached_id is not None and cached_id in self._sessions:
+            return cached_id
+
+        headers = {"x-bb-api-key": _api_key()}
+        query = f"user_metadata['getgatherBrowserId']:'{logical_browser_id}'"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(BROWSERBASE_API_URL, headers=headers, params={"q": query})
+            response.raise_for_status()
+            raw_sessions: Any = response.json()
+            if not isinstance(raw_sessions, list):
+                return None
+            candidates: list[dict[str, Any]] = []
+            for raw_session in raw_sessions:  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(raw_session, dict):
+                    continue
+                session = cast(dict[str, Any], raw_session)
+                if session.get("status") in {"PENDING", "RUNNING"}:
+                    candidates.append(session)
+            if not candidates:
+                return None
+            candidate = max(candidates, key=lambda item: str(item.get("updatedAt", "")))
+            session_id: Any = candidate.get("id")
+            if not isinstance(session_id, str):
+                return None
+            detail = await client.get(f"{BROWSERBASE_API_URL}/{session_id}", headers=headers)
+            detail.raise_for_status()
+            raw_data: Any = detail.json()
+            if not isinstance(raw_data, dict):
+                return None
+            data = cast(dict[str, Any], raw_data)
+            connect_url: Any = data.get("connectUrl")
+            if not isinstance(connect_url, str):
+                return None
+
+        self._sessions[session_id] = connect_url
+        self._logical_sessions[logical_browser_id] = session_id
+        return session_id
+
+    async def list_routed_sessions(self) -> dict[str, str]:
+        """Return active routed IDs and their Browserbase-assigned session IDs."""
+        from getgather.browsers.route_id import parse_routed_browser_id
+
+        headers = {"x-bb-api-key": _api_key()}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(BROWSERBASE_API_URL, headers=headers)
+            response.raise_for_status()
+            raw_sessions: Any = response.json()
+        if not isinstance(raw_sessions, list):
+            return {}
+
+        routes: dict[str, str] = {}
+        for raw_session in raw_sessions:  # pyright: ignore[reportUnknownVariableType]
+            if not isinstance(raw_session, dict):
+                continue
+            session = cast(dict[str, Any], raw_session)
+            if session.get("status") not in {"PENDING", "RUNNING"}:
+                continue
+            metadata = session.get("userMetadata")
+            session_id = session.get("id")
+            if not isinstance(metadata, dict) or not isinstance(session_id, str):
+                continue
+            typed_metadata = cast(dict[str, Any], metadata)
+            routed_id: Any = typed_metadata.get("getgatherBrowserId")
+            if isinstance(routed_id, str) and parse_routed_browser_id(routed_id) is not None:
+                routes[routed_id] = session_id
+                self._logical_sessions[routed_id] = session_id
+        return routes
+
+    def cdp_targets_need_namespacing(self, browser_id: str | None = None) -> bool:
         # The connectUrl is a single browser's socket; the router namespaces its target ids by
         # browser_id so the devtools route can route /devtools/{browser_id@page_id} back here.
+        del browser_id
         return True
 
     async def get_devtools_websocket_remote_url(
@@ -355,6 +440,9 @@ class BrowserbaseBackend:
         # clear the local id -> connectUrl mapping, regardless of whether the upstream call
         # succeeds (a 404 means the session is already gone, which is the desired state).
         self._sessions.pop(browser_id, None)
+        for logical_id, session_id in list(self._logical_sessions.items()):
+            if session_id == browser_id:
+                self._logical_sessions.pop(logical_id, None)
         try:
             headers = {"Content-Type": "application/json", "x-bb-api-key": _api_key()}
             body = {"status": "REQUEST_RELEASE"}
@@ -367,7 +455,7 @@ class BrowserbaseBackend:
                     response.raise_for_status()
             logger.info(f"Browserbase session released: id={browser_id}")
         except Exception as e:
-            logger.warning(f"Browserbase release failed for {browser_id}: {type(e).__name__}: {e}")
+            logger.warning(f"Browserbase release failed for {browser_id}: error={type(e).__name__}")
         return {"browser_id": browser_id, "status": "deleted"}
 
     async def browser_exists(self, browser_id: str) -> bool:
@@ -404,7 +492,10 @@ class BrowserbaseBackend:
                 )
                 response.raise_for_status()
             except httpx.HTTPError as e:
-                logger.warning(f"Browserbase live view lookup failed for {browser_id}: {e}")
+                logger.warning(
+                    f"Browserbase live view lookup failed for {browser_id}: "
+                    f"error={type(e).__name__}"
+                )
                 return None
         data: dict[str, Any] = response.json()
         url: Any = data.get("debuggerFullscreenUrl")  # pyright: ignore[reportUnknownMemberType]
