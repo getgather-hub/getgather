@@ -10,7 +10,7 @@ from fastapi.websockets import WebSocketState
 from loguru import logger
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from getgather.browsers.backend import BROWSER_SCOPE, BrowserNotFound
+from getgather.browsers.backend import BROWSER_SCOPE, CDP_WS_PING_INTERVAL_SECONDS, BrowserNotFound
 from getgather.browsers.residential_proxy import get_proxy_config
 from getgather.config import settings
 
@@ -315,6 +315,9 @@ class BrowserbaseBackend:
         # multiplexed CDP socket the router relays to directly; there is no /json/version
         # discovery step. None for an unknown / already-released session.
         return self._sessions.get(browser_id)
+
+    def cdp_ws_ping_interval(self) -> float | None:
+        return CDP_WS_PING_INTERVAL_SECONDS
 
     def cdp_targets_need_namespacing(self) -> bool:
         # The connectUrl is a single browser's socket; the router namespaces its target ids by

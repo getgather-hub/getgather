@@ -311,3 +311,9 @@ def test_backend_default_best_of_n_consts(module_name: str, expected: int) -> No
 
     module = importlib.import_module(module_name)
     assert module.DEFAULT_BEST_OF_N == expected
+
+
+def test_cdp_ws_pings_disabled() -> None:
+    # Daytona is the one backend that opts out of CDP keepalive pings; the others keep the
+    # 60s default (see tests/test_browser_backend.py).
+    assert _backend().cdp_ws_ping_interval() is None
