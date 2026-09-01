@@ -30,6 +30,7 @@ from getgather.browser import (
     wait_for_ready_state,
     zen_navigate_with_retry,
 )
+from getgather.browsers.target_ids import strip_browser_id_from_target_id
 from getgather.config import settings
 from getgather.mcp.html_renderer import DEFAULT_TITLE, render_form
 from getgather.zen_distill import (
@@ -71,6 +72,13 @@ class SignInId:
     browser_id: str
     target_id: str
     mcp_session_id: str | None = None
+
+    def __post_init__(self) -> None:
+        # Target ids read off a zendriver tab arrive namespaced (`<browser_id>@<page_id>`) because
+        # the browser is attached over the `/cdp/{browser_id}` proxy. The browser_id is already a
+        # field here, so carrying the prefix would both duplicate it and put an `@` into the
+        # user-visible /dpage/ URL. Normalise once, at construction, for every call site.
+        object.__setattr__(self, "target_id", strip_browser_id_from_target_id(self.target_id))
 
     def __str__(self) -> str:
         parts = [self.browser_id, self.target_id]

@@ -1,7 +1,8 @@
 import asyncio
 import html
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 import httpx
 import websockets
@@ -17,6 +18,10 @@ from getgather.browsers.backend import (
     best_of_n,
     create_backend,
     new_browser_id,
+)
+from getgather.browsers.target_ids import (
+    prepend_browser_id_to_target_id,
+    strip_browser_id_from_target_id,
 )
 from getgather.cdp_client import CDPClient, open_cdp_url
 from getgather.config import settings
@@ -80,71 +85,129 @@ async def get_page_list(browser_id: str) -> list[str]:
     return [str(info["targetId"]) for info in target_infos if info.get("type") == "page"]
 
 
+# The un-namespaced page scan is O(live fleet size) and each probe costs a backend API call plus
+# a CDP round-trip (~0.9s against Daytona), so serialising it makes a hundred-sandbox fleet a
+# ~90s connect. Probe in parallel and take the first hit; the cap keeps us from stampeding the
+# backend's API rate limit.
+PAGE_SCAN_CONCURRENCY = 16
+
+
 async def find_browser_id(page_id: str) -> str | None:
     # Live-only: a stopped or archived browser cannot host the page, so probing it would only
     # buy a round-trip and an error.
     browser_ids = await backend.list_browser_ids("live")
-    logger.debug(f"[CDP] scanning {len(browser_ids)} browser(s) for page_id={page_id}")
-    for browser_id in browser_ids:
-        page_ids = await get_page_list(browser_id)
-        if page_id in page_ids:
-            return browser_id
+    # Not debug: reaching here means a client built a raw `/devtools/page/<id>` URL instead of the
+    # `<browser_id>@<page_id>` form, which is a routing bug upstream (see `patch_cdp_target_inbound`)
+    # rather than a normal code path. Keep it loud so a regression shows up as fleet-size latency.
+    logger.warning(
+        f"[CDP] un-namespaced page_id={page_id}: scanning {len(browser_ids)} live browser(s)"
+    )
+    if not browser_ids:
+        return None
+
+    semaphore = asyncio.Semaphore(PAGE_SCAN_CONCURRENCY)
+
+    async def probe(browser_id: str) -> str | None:
+        async with semaphore:
+            return browser_id if page_id in await get_page_list(browser_id) else None
+
+    tasks = [asyncio.create_task(probe(browser_id)) for browser_id in browser_ids]
+    try:
+        for completed in asyncio.as_completed(tasks):
+            found = await completed
+            if found is not None:
+                return found
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     return None
 
 
-def strip_browser_id_from_target_id(target_id: str) -> str:
-    if "@" not in target_id:
-        return target_id
-    return target_id.split("@", 1)[1]
+def _as_dict(value: object) -> dict[str, Any] | None:
+    """Narrow an arbitrary decoded-JSON node to a dict, or None if it is anything else."""
+    return cast(dict[str, Any], value) if isinstance(value, dict) else None
 
 
-def prepend_browser_id_to_target_id(target_id: str, browser_id: str) -> str:
-    return browser_id + "@" + target_id
+def _rewrite_target_id_field(container: object, rewrite: Callable[[str], str]) -> None:
+    """Rewrite `container["targetId"]` in place, if `container` is a dict holding a string there."""
+    fields = _as_dict(container)
+    if fields is None:
+        return
+    target_id = fields.get("targetId")
+    if isinstance(target_id, str):
+        fields["targetId"] = rewrite(target_id)
 
 
-CDP_TARGET_METHODS_STRIP_ID = (
-    "Target.attachToTarget",
-    "Target.closeTarget",
-    "Target.getTargetInfo",
-)
+def _rewrite_target_ids(data: object, rewrite: Callable[[str], str]) -> None:
+    """Rewrite every target id the CDP Target/Browser protocol owns, in place.
+
+    Only these five locations are touched, which is the complete set across `cdp/target.py` and
+    `cdp/browser.py`:
+
+    - `params.targetId` — attach/close/activate/getTargetInfo/sendMessageToTarget requests,
+      `Browser.getWindowForTarget`, and the targetDestroyed / targetCrashed events
+    - `params.targetInfo.targetId` — targetCreated / attachedToTarget / targetInfoChanged
+    - `result.targetId` — createTarget
+    - `result.targetInfo.targetId` — getTargetInfo
+    - `result.targetInfos[*].targetId` — getTargets
+
+    Deliberately NOT a walk over the whole message. `targetId` is not a reserved word, so a
+    recursive rewrite also hits application data that merely happens to use that key: a
+    `Runtime.evaluate` result at `result.result.value.targetId` (e.g. the entire
+    `window.ytInitialData` blob) or a `Runtime.callFunctionOn` argument at
+    `params.arguments[*].value.targetId`. Rewriting those corrupts scraped data silently, and
+    the outbound strip is worse than the inbound prefix because it truncates at the first `@`.
+    Every protocol-owned path is shallow, so bounding to them costs no coverage.
+
+    Gating on shape rather than on `method` is also deliberate: a CDP *response* is
+    `{"id": N, "result": {...}}` with no method field, so a method allowlist cannot classify one
+    without stateful id->method tracking. That is exactly the trap the previous version fell
+    into — it matched on `method`, then fell back to a bare `result.targetId` check, which is
+    how `result.targetInfos[]` went unpatched and cost a full-fleet scan in `find_browser_id`.
+    """
+    message = _as_dict(data)
+    if message is None:
+        return
+
+    params = _as_dict(message.get("params"))
+    if params is not None:
+        _rewrite_target_id_field(params, rewrite)
+        _rewrite_target_id_field(params.get("targetInfo"), rewrite)
+
+    result = _as_dict(message.get("result"))
+    if result is not None:
+        _rewrite_target_id_field(result, rewrite)
+        _rewrite_target_id_field(result.get("targetInfo"), rewrite)
+        target_infos = result.get("targetInfos")
+        if isinstance(target_infos, list):
+            for info in cast(list[Any], target_infos):
+                _rewrite_target_id_field(info, rewrite)
 
 
-def patch_cdp_target(message: str, browser_id: str) -> str:
+def _patch_cdp_target(message: str, rewrite: Callable[[str], str]) -> str:
     if "targetId" not in message:
         return message
-
     try:
         data: Any = json.loads(message)
     except (json.JSONDecodeError, TypeError):
         return message
+    _rewrite_target_ids(data, rewrite)
+    return json.dumps(data)
 
-    if isinstance(data, dict):
-        if data.get("method") == "Target.targetCreated":  # pyright: ignore[reportUnknownMemberType]
-            params: Any = data.get("params")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            if isinstance(params, dict):
-                target_info: Any = params.get("targetInfo")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-                if isinstance(target_info, dict) and "targetId" in target_info:
-                    target_info["targetId"] = prepend_browser_id_to_target_id(
-                        str(target_info["targetId"]),  # pyright: ignore[reportUnknownArgumentType]
-                        browser_id,
-                    )
-                    return json.dumps(data)
-        elif data.get("method") in CDP_TARGET_METHODS_STRIP_ID:  # pyright: ignore[reportUnknownMemberType]
-            params = data.get("params")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            if isinstance(params, dict) and "targetId" in params:
-                params["targetId"] = strip_browser_id_from_target_id(str(params["targetId"]))  # pyright: ignore[reportUnknownArgumentType]
-                return json.dumps(data)
-        elif "result" in data:
-            result: Any = data.get("result")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-            if isinstance(result, dict) and "targetId" in result:
-                result["targetId"] = prepend_browser_id_to_target_id(
-                    str(result["targetId"]),  # pyright: ignore[reportUnknownArgumentType]
-                    browser_id,
-                )
-                return json.dumps(data)
 
-    return message
+def patch_cdp_target_outbound(message: str, browser_id: str) -> str:
+    """Client -> browser: the browser only knows its own raw ids, so drop the namespace."""
+    del browser_id  # stripping is browser-agnostic; the prefix is whatever the client sent back
+    return _patch_cdp_target(message, strip_browser_id_from_target_id)
+
+
+def patch_cdp_target_inbound(message: str, browser_id: str) -> str:
+    """Browser -> client: namespace every id so the client can route it back to this browser."""
+    return _patch_cdp_target(
+        message, lambda target_id: prepend_browser_id_to_target_id(target_id, browser_id)
+    )
 
 
 async def websocket_proxy(
@@ -168,7 +231,7 @@ async def websocket_proxy(
                     while True:
                         message = await client_ws.receive_text()
                         if patch:
-                            message = patch_cdp_target(message, browser_id)
+                            message = patch_cdp_target_outbound(message, browser_id)
                         logger.debug(f"[CDP] Client -> Remote: {message[:100]}")
                         await remote_ws.send(message)
                 except (WebSocketDisconnect, RuntimeError):
@@ -181,7 +244,7 @@ async def websocket_proxy(
                     async for message in remote_ws:
                         msg_text = message if isinstance(message, str) else message.decode()
                         if patch:
-                            msg_text = patch_cdp_target(msg_text, browser_id)
+                            msg_text = patch_cdp_target_inbound(msg_text, browser_id)
                         logger.debug(f"[CDP] Remote -> Client: {msg_text[:100]}")
                         if client_ws.client_state == WebSocketState.CONNECTED:
                             await client_ws.send_text(msg_text)
