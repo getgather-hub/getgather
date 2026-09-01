@@ -21,6 +21,7 @@ from zendriver.core.connection import Connection, ProtocolException
 
 from getgather.browsers.fleet_browsers import build_chromefleet_headers, call_chromefleet_api
 from getgather.config import FRIENDLY_CHARS, settings
+from getgather.recordings import schedule_upload_for_closed_tab
 
 _ws_extra_headers_var: ContextVar[dict[str, str] | None] = ContextVar(
     "_ws_extra_headers_var", default=None
@@ -384,6 +385,9 @@ async def safe_close_page(page: zd.Tab) -> None:
         else:
             await page.close()
         logger.info("Page closed successfully")
+
+        if isinstance(raw_target_id, str):
+            schedule_upload_for_closed_tab(raw_target_id)
     except Exception as e:
         logger.warning(f"Error closing page: {e}")
 

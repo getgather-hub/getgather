@@ -25,6 +25,7 @@ dependencies = [
   "websockets>=15.0.1",
   "async-lru>=2.0",
   "geoip2>=5.2.0",
+  "boto3>=1.35.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +38,7 @@ dev = [
   "faker>=33.3.0",
   "nanoid>=2.0.0",
   "pyright>=1.1.409",
+  "boto3-stubs[s3]>=1.35.0",
   "pytest>=8.3.5",
   "pytest-asyncio>=0.23.5",
   "pytest-cov>=4.1.0",

@@ -23,6 +23,18 @@ class Settings(BrowserSettings, BaseSettings):
     SENTRY_DSN: str = ""
     LOGFIRE_TOKEN: str = ""
 
+    # Session-recording uploads to Tigris (S3-compatible).
+    TIGRIS_BUCKET: str = ""
+    TIGRIS_ENDPOINT_URL: str = "https://t3.storage.dev"
+    TIGRIS_ACCESS_KEY_ID: str = ""
+    TIGRIS_SECRET_ACCESS_KEY: str = ""
+
+    @property
+    def recording_upload_enabled(self) -> bool:
+        return bool(
+            self.TIGRIS_BUCKET and self.TIGRIS_ACCESS_KEY_ID and self.TIGRIS_SECRET_ACCESS_KEY
+        )
+
     @property
     def data_dir(self) -> Path:
         path = Path(self.DATA_DIR).resolve() if self.DATA_DIR else PROJECT_DIR / "data"
