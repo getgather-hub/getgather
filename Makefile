@@ -40,7 +40,7 @@ typecheck:
 
 .PHONY: test
 test:
-	uv run pytest -m "not api and not webui and not mcp and not distill"
+	uv run pytest --no-header --tb=no -q -m "not api and not mcp and not distill"
 
 .PHONY: check-patterns
 check-patterns:
