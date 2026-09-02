@@ -16,7 +16,9 @@ from getgather.browsers.backend import (
     BrowserNotFound,
     best_of_n,
     create_backend,
+    mark_browser_deleting,
     new_browser_id,
+    was_browser_recently_deleted,
 )
 from getgather.cdp_client import CDPClient, open_cdp_url
 from getgather.config import settings
@@ -272,6 +274,7 @@ async def delete_browser(browser_id: str) -> dict[str, Any]:
         logger.warning(detail)
         raise HTTPException(status_code=404, detail=detail)
     try:
+        mark_browser_deleting(browser_id)
         result = await backend.delete_browser(browser_id)
         logger.info(f"Browser {browser_id} is stopped.")
         return result
@@ -312,8 +315,13 @@ async def relay_browser_cdp(client_ws: WebSocket, browser_id: str, *, patch: boo
     await client_ws.accept()
     logger.debug("[CDP] WebSocket accepted")
 
-    # (1) Auto-launch the browser if it isn't running yet.
+    # (1) Auto-launch the browser if it isn't running yet, unless it was just deleted: a connect
+    # racing a teardown must not silently resurrect it under the same id.
     if not await backend.browser_exists(browser_id):
+        if was_browser_recently_deleted(browser_id):
+            logger.warning(f"[CDP] Browser {browser_id} was just deleted — refusing to relaunch")
+            await client_ws.close(code=1008)
+            return
         logger.info(f"[CDP] Browser {browser_id} not found — launching")
         try:
             origin_ip = client_ws.headers.get("x-origin-ip")

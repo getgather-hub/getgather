@@ -12,6 +12,28 @@ from getgather.config import FRIENDLY_CHARS, settings
 # `chromium-abc`. Both local backends derive names and parse ids from this single prefix.
 BROWSER_NAME_PREFIX = "chromium-"
 
+RECENTLY_DELETED_SECONDS = 60.0
+_deleted_at: dict[str, float] = {}
+
+
+def mark_browser_deleting(browser_id: str) -> None:
+    """Remember `browser_id` as deleted. Call before awaiting the delete, not after."""
+    now = asyncio.get_running_loop().time()
+    for stale in [b for b, t in _deleted_at.items() if now - t > RECENTLY_DELETED_SECONDS]:
+        del _deleted_at[stale]
+    _deleted_at[browser_id] = now
+
+
+def was_browser_recently_deleted(browser_id: str) -> bool:
+    deleted_at = _deleted_at.get(browser_id)
+    if deleted_at is None:
+        return False
+    if asyncio.get_running_loop().time() - deleted_at > RECENTLY_DELETED_SECONDS:
+        del _deleted_at[browser_id]
+        return False
+    return True
+
+
 # Which browsers a listing should include. `all` is the full inventory, including ones a
 # backend can resume on demand; `live` is only those able to serve CDP right now.
 BROWSER_SCOPE = Literal["all", "live"]
@@ -169,6 +191,7 @@ async def _cleanup_losers(backend: _CleanupBackend, ids: list[str], *, winner_id
         for _ in range(8):
             if await backend.browser_exists(browser_id):
                 try:
+                    mark_browser_deleting(browser_id)
                     await backend.delete_browser(browser_id)
                     logger.info(f"Best-of-N: deleted losing candidate {browser_id}")
                     deleted = True
@@ -180,6 +203,7 @@ async def _cleanup_losers(backend: _CleanupBackend, ids: list[str], *, winner_id
             # Never confirmed it existed; still issue one idempotent delete so per-id backend
             # state (e.g. Daytona's lock dict) is cleaned up. Swallow the not-found failure.
             try:
+                mark_browser_deleting(browser_id)
                 await backend.delete_browser(browser_id)
             except Exception as e:
                 logger.debug(f"Best-of-N: final delete for loser {browser_id} failed: {e}")
