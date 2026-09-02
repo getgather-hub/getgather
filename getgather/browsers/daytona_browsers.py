@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime
 from typing import Any
 
 from daytona import (
@@ -69,6 +70,17 @@ LABEL_FLEET = "fleet"
 
 def _sandbox_name(browser_id: str) -> str:
     return f"{BROWSER_NAME_PREFIX}{browser_id}"
+
+
+def _parse_timestamp(value: str | None) -> float | None:
+    """A Daytona ISO-8601 timestamp as unix epoch, or None if absent/unparseable."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except ValueError:
+        logger.warning(f"Unparseable Daytona timestamp: {value!r}")
+        return None
 
 
 async def _configure_sandbox_proxy(sandbox: AsyncSandbox, proxy_url: str) -> bool:
@@ -340,7 +352,7 @@ class DaytonaBackend:
             "hostname": sandbox.name,
             "cdp_url": signed.url,  # public, internet-reachable; bearer secret (see SIGNED_URL_TTL_SECONDS)
             "app_state": sandbox.state,
-            "last_activity_timestamp": await self._get_last_activity(sandbox),
+            "last_activity_timestamp": _parse_timestamp(sandbox.last_activity_at),
         }
 
     async def _get_last_activity(self, sandbox: AsyncSandbox) -> float | None:
