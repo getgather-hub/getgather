@@ -15,16 +15,6 @@ on:
         required: false
         type: boolean
         default: true
-      daytona:
-        description: Deploy remotebrowser-daytona
-        required: false
-        type: boolean
-        default: true
-      browserbase:
-        description: Deploy remotebrowser-browserbase
-        required: false
-        type: boolean
-        default: true
 
 jobs:
   prepare-matrix:
@@ -36,15 +26,11 @@ jobs:
         uses: remotebrowser/shared-github-actions/prepare-matrix@v1
         with:
           entries: |
-            { "env": "demo",        "config": "demo",        "app_name": "remotebrowser"     }
-            { "env": "dev",         "config": "dev",         "app_name": "remotebrowser-dev" }
-            { "env": "daytona",     "config": "daytona",     "app_name": "remotebrowser-daytona" }
-            { "env": "browserbase", "config": "browserbase", "app_name": "remotebrowser-browserbase" }
+            { "env": "demo", "config": "demo", "app_name": "remotebrowser"     }
+            { "env": "dev",  "config": "dev",  "app_name": "remotebrowser-dev" }
           selections: |
-            ${{ inputs.demo        && 'demo'        || '' }}
-            ${{ inputs.dev         && 'dev'         || '' }}
-            ${{ inputs.daytona     && 'daytona'     || '' }}
-            ${{ inputs.browserbase && 'browserbase' || '' }}
+            ${{ inputs.demo && 'demo' || '' }}
+            ${{ inputs.dev  && 'dev'  || '' }}
           key-field: env
 
   deploy:
