@@ -6,10 +6,6 @@ Remote Browser is an open-source, self-hosted browser orchestration system for A
 
 It launches and manages multiple isolated, containerized Chrome instances with CDP ([Chrome Devtools Protocol](https://chromedevtools.github.io/devtools-protocol/)) support for scalable web automation. Remote Browser is designed to integrate with AI agent runtimes and browser tools, and works with [OpenClaw](https://openclaw.ai), [Hermes Agent](https://hermes-agent.nousresearch.com), etc.
 
-It also bundles an MCP server for extracting personal data from many services: Amazon order history, Garmin activity stats, Zillow favorites, and more. This MCP server works with [Claude Code](https://claude.ai/code), [LM Studio](https://lmstudio.ai), [Gemini CLI](https://google-gemini.github.io/gemini-cli), and many more.
-
-![Screenshot of Claude Code using Remote Browser MCP](claude-code-remotebrowser-mcp.png)
-
 ## Quickstart
 
 Remote Browser is a Python app. To run it, you need [uv](https://docs.astral.sh/uv) and [Podman](https://podman.io):
@@ -19,59 +15,6 @@ uvx remotebrowser
 ```
 
 Then open `http://localhost:23456`.
-
-## MCP
-
-**Standard config** works with most tools:
-
-```js
-{
-  "mcpServers": {
-    "remotebrowser-mcp": {
-      "url": "http://127.0.0.1:23456/mcp"
-    }
-  }
-}
-```
-
-<details>
-<summary>Claude Code</summary>
-
-Use the Claude Code CLI to add the MCP server:
-
-```bash
-claude mcp add --transport http remotebrowser-mcp http://localhost:23456/mcp
-```
-
-</details>
-
-<details>
-<summary>Claude Desktop</summary>
-
-Follow the MCP install [guide](https://modelcontextprotocol.io/quickstart/user), use the standard config above.
-
-</details>
-
-<details>
-<summary>Gemini CLI</summary>
-
-Follow the MCP install [guide](https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md#configure-the-mcp-server-in-settingsjson), use the standard config above.
-
-</details>
-
-<details>
-<summary>LM Studio</summary>
-
-Go to `Program` in the right sidebar -> `Install` -> `Edit mcp.json`. Use the standard config above.
-
-</details>
-
-<details>
-<summary>VS Code</summary>
-
-Follow the MCP install [guide](https://code.visualstudio.com/docs/copilot/chat/mcp-servers#_add-an-mcp-server), use the standard config above.
-
-</details>
 
 ## API
 
@@ -152,62 +95,6 @@ _Example_: `curl -X POST 'localhost:23456/api/v1/browsers/test/pages/96FDE4162B8
 ```json
 { "status": "success" }
 ```
-
-### Get distilled page JSON
-
-`GET /api/v1/browsers/{browser_id}/pages/{page_id}/distilled` returns the distilled JSON representation of the specified page, produced by matching the page against distillation patterns. Returns HTTP 404 if the browser or page is not found.
-
-_Example_: `curl localhost:23456/api/v1/browsers/test/pages/96FDE4162B8EEEBF98E26756D21CF0C5/distilled`
-
-### Submit distilled page form
-
-`POST /api/v1/browsers/{browser_id}/pages/{page_id}/distill` submits form field values for the specified page and continues the distillation loop, returning the next rendered distilled HTML form. The request body is form-encoded (`application/x-www-form-urlencoded` or `multipart/form-data`); each field is mapped by its `name` to the corresponding form input. Returns HTTP 404 if the browser or page is not found.
-
-_Example_: `curl -X POST localhost:23456/api/v1/browsers/test/pages/96FDE4162B8EEEBF98E26756D21CF0C5/distill -d 'email=user@example.com&password=secret'` returns the next distilled HTML page.
-
-### List all patterns
-
-`GET /api/v1/patterns` returns a JSON array of all pattern filenames (sorted alphabetically), including the extension (`.html` or `.json`).
-
-_Example_: `curl localhost:8300/api/v1/patterns` returns:
-
-```json
-["amazon_signin.html", "amazon_signin.json", "goodreads_signin.html"]
-```
-
-### Get a pattern
-
-`GET /api/v1/patterns/{pattern_name}` returns the content of the named pattern. Accepts an optional `ext` query parameter (`html` or `json`, defaults to `html`). Returns HTTP 404 if the pattern is not found, HTTP 400 if the name contains invalid characters or the extension is unsupported.
-
-_Example_: `curl localhost:8300/api/v1/patterns/amazon_signin` returns the raw HTML of `amazon_signin.html`.
-
-_Example_: `curl localhost:8300/api/v1/patterns/amazon_signin?ext=json` returns the JSON content of `amazon_signin.json`.
-
-### Create or update a pattern
-
-`POST /api/v1/patterns/{pattern_name}` writes content to the named pattern file, creating it if it does not exist. Accepts an optional `ext` query parameter (`html` or `json`, defaults to `html`). Returns HTTP 400 if the name contains invalid characters or the extension is unsupported.
-
-_Example_: `curl -X POST localhost:8300/api/v1/patterns/amazon_signin -H 'Content-Type: application/json' -d '{"content": "<div gg-match=\"...\">"}'` returns:
-
-```json
-{ "pattern_name": "amazon_signin", "status": "created" }
-```
-
-On subsequent calls the status field is `"updated"`.
-
-_Example (JSON)_: `curl -X POST 'localhost:8300/api/v1/patterns/amazon_signin?ext=json' -H 'Content-Type: application/json' -d '{"content": "{\"rows\": \"tr\"}"}'`
-
-### Delete a pattern
-
-`DELETE /api/v1/patterns/{pattern_name}` removes the named pattern file. Accepts an optional `ext` query parameter (`html` or `json`, defaults to `html`). Returns HTTP 404 if the pattern is not found, HTTP 400 if the name contains invalid characters or the extension is unsupported.
-
-_Example_: `curl -X DELETE localhost:8300/api/v1/patterns/amazon_signin` returns:
-
-```json
-{ "pattern_name": "amazon_signin", "status": "deleted" }
-```
-
-_Example (JSON)_: `curl -X DELETE 'localhost:8300/api/v1/patterns/amazon_signin?ext=json'`
 
 ## Backends
 

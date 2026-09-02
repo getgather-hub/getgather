@@ -3,28 +3,27 @@
 Owns all observability wiring:
 - Logfire configuration and FastAPI/httpx instrumentation
 - Loguru → Logfire handler
-- Per-request `mcp-session-id` generation/echo and per-session trace grouping
+- Per-request `x-session-id` generation/echo and per-session trace grouping
   via a raw ASGI middleware
 
 The goal is that every log emitted while processing requests sharing one
-`mcp-session-id` lives under one Logfire trace. Two cases:
+`x-session-id` lives under one Logfire trace. Two cases:
 
 - **Caller sends a W3C `traceparent`.** The caller owns the trace. We leave
   `traceparent`/`tracestate` untouched so OTel's distributed-tracing
   propagation parents server spans naturally under the caller's trace. We
-  only tag spans with `mcp.mcp_session_id` for filtering.
+  only tag spans with `session.session_id` for filtering.
 
 - **Caller sends no `traceparent`.** We mint a deterministic root span whose
-  `trace_id` IS the `mcp_session_id` (a uuid4().hex is 32 hex chars = 128
+  `trace_id` IS the `session_id` (a uuid4().hex is 32 hex chars = 128
   bits, a valid OTel trace_id), and rewrite the scope `traceparent` to point
   at it BEFORE OTel's FastAPI instrumentation extracts it. All requests for
   the session collapse into one trace whose id is the session id — pasteable
   into Logfire to find the trace.
 
-The MCP server runs in stateless_http mode (multi-instance deployment), so
-the server doesn't track sessions itself. We generate a session id when the
-client doesn't supply one and echo `mcp-session-id` back so the client SDK
-reuses it across requests.
+The server doesn't track sessions itself. We generate a session id when the
+client doesn't supply one and echo `x-session-id` back so the client reuses
+it across requests.
 """
 
 import hashlib
@@ -47,12 +46,11 @@ if TYPE_CHECKING:
     from loguru import HandlerConfig
 
 
-MCP_SESSION_ID_HEADER = b"mcp-session-id"
-SIGNIN_ID_HEADER = b"x-signin-id"
+SESSION_ID_HEADER = b"x-session-id"
 TRACEPARENT_HEADER = b"traceparent"
 TRACESTATE_HEADER = b"tracestate"
 
-SCOPE_SESSION_ID_KEY = "mcp_session_id"
+SCOPE_SESSION_ID_KEY = "session_id"
 
 
 def setup_logfire() -> None:
@@ -96,14 +94,12 @@ _emitted_session_root_spans: set[str] = set()
 _SESSION_INSTRUMENTATION_SCOPE = InstrumentationScope("getgather.session")
 
 
-def _mcp_endpoint_from_path(path: str) -> str:
-    if path.startswith("/dpage"):
-        return "dpage"
-    return path.removeprefix("/mcp").strip("/").split("/")[0] or "root"
+def _endpoint_from_path(path: str) -> str:
+    return path.strip("/").split("/")[0] or "root"
 
 
-class MCPSessionTraceMiddleware:
-    """Raw ASGI middleware that groups MCP/dpage requests into a session trace.
+class SessionTraceMiddleware:
+    """Raw ASGI middleware that groups requests into a session trace.
 
     Must wrap the FastAPI app from OUTSIDE OpenTelemetry's instrumentation.
     OTel's FastAPIInstrumentor wraps the entire user-middleware stack via
@@ -115,7 +111,7 @@ class MCPSessionTraceMiddleware:
     - If the caller sent a valid W3C `traceparent`, leave it alone — the
       caller owns the trace, server spans parent under it naturally.
     - Otherwise, inject a deterministic `traceparent` pointing at a per-session
-      root span whose trace_id == mcp_session_id, so all requests for that
+      root span whose trace_id == session_id, so all requests for that
       session land in one trace.
     """
 
@@ -128,83 +124,48 @@ class MCPSessionTraceMiddleware:
             return
 
         path = scope.get("path", "")
-        is_mcp = path.startswith("/mcp")
-        is_dpage = path.startswith("/dpage/")
-        if not (is_mcp or is_dpage):
-            await self.app(scope, receive, send)
-            return
-
         headers: list[tuple[bytes, bytes]] = list(scope["headers"])
         header_map: dict[bytes, bytes] = {k: v for k, v in headers}
 
-        request_mcp_session_id = self._get_mcp_session_id_from_request(path, header_map)
-        if not request_mcp_session_id and is_dpage:
-            # No session embedded in the dpage id — can't reparent meaningfully.
-            await self.app(scope, receive, send)
-            return
-
-        mcp_session_id = request_mcp_session_id or uuid.uuid4().hex
-        scope[SCOPE_SESSION_ID_KEY] = mcp_session_id
+        request_session_id = header_map.get(SESSION_ID_HEADER, b"").decode() or None
+        session_id = request_session_id or uuid.uuid4().hex
+        scope[SCOPE_SESSION_ID_KEY] = session_id
 
         caller_has_trace = self._has_valid_caller_traceparent(header_map)
 
         if caller_has_trace:
             # Case 1: caller owns the trace. Don't touch traceparent/tracestate;
-            # just canonicalize the mcp-session-id header so downstream code
+            # just canonicalize the session-id header so downstream code
             # sees the (possibly server-generated) value.
-            new_headers = [(k, v) for k, v in headers if k != MCP_SESSION_ID_HEADER]
-            new_headers.append((MCP_SESSION_ID_HEADER, mcp_session_id.encode()))
+            new_headers = [(k, v) for k, v in headers if k != SESSION_ID_HEADER]
+            new_headers.append((SESSION_ID_HEADER, session_id.encode()))
             scope["headers"] = new_headers
         else:
             # Case 2: no caller trace. Mint a session-deterministic traceparent
             # so OTel parents the request span under our session root.
-            endpoint = _mcp_endpoint_from_path(path)
-            self._emit_mcp_session_root_span_once(mcp_session_id, endpoint)
-            session_traceparent = self._traceparent_for_mcp_session(mcp_session_id)
+            endpoint = _endpoint_from_path(path)
+            self._emit_session_root_span_once(session_id, endpoint)
+            session_traceparent = self._traceparent_for_session(session_id)
             stripped = [
                 (k, v)
                 for k, v in headers
-                if k not in (TRACEPARENT_HEADER, TRACESTATE_HEADER, MCP_SESSION_ID_HEADER)
+                if k not in (TRACEPARENT_HEADER, TRACESTATE_HEADER, SESSION_ID_HEADER)
             ]
             stripped.append((TRACEPARENT_HEADER, session_traceparent))
-            stripped.append((MCP_SESSION_ID_HEADER, mcp_session_id.encode()))
+            stripped.append((SESSION_ID_HEADER, session_id.encode()))
             scope["headers"] = stripped
 
-        session_id_header_bytes = mcp_session_id.encode()
+        session_id_header_bytes = session_id.encode()
 
         async def send_with_session_id(message: Message) -> None:
             if message["type"] == "http.response.start":
                 existing: list[tuple[bytes, bytes]] = list(message.get("headers") or [])
-                response_headers = [(k, v) for k, v in existing if k != MCP_SESSION_ID_HEADER]
-                response_headers.append((MCP_SESSION_ID_HEADER, session_id_header_bytes))
+                response_headers = [(k, v) for k, v in existing if k != SESSION_ID_HEADER]
+                response_headers.append((SESSION_ID_HEADER, session_id_header_bytes))
                 message["headers"] = response_headers
             await send(message)
 
         await self.app(scope, receive, send_with_session_id)
-
-    @classmethod
-    def _get_mcp_session_id_from_request(
-        cls, path: str, header_map: dict[bytes, bytes]
-    ) -> str | None:
-        from getgather.mcp.dpage import SignInId
-
-        # Prefer the session embedded in a sign-in id (header for /mcp/*,
-        # path for /dpage/*) so a tool-retry after sign-in lands in the
-        # original sign-in trace instead of a fresh mcp-session-id trace.
-        embedded_session: str | None = None
-        signin_header = header_map.get(SIGNIN_ID_HEADER, b"").decode() or None
-        if signin_header:
-            try:
-                embedded_session = SignInId.from_str(signin_header).mcp_session_id
-            except ValueError:
-                embedded_session = None
-
-        is_dpage = path.startswith("/dpage/")
-        if embedded_session is None and is_dpage:
-            dpage_signin = SignInId.from_dpage_path(path)
-            embedded_session = dpage_signin.mcp_session_id if dpage_signin else None
-
-        return embedded_session or (header_map.get(MCP_SESSION_ID_HEADER, b"").decode() or None)
 
     @classmethod
     def _has_valid_caller_traceparent(cls, header_map: dict[bytes, bytes]) -> bool:
@@ -219,15 +180,15 @@ class MCPSessionTraceMiddleware:
         return trace.get_current_span(extracted).get_span_context().is_valid
 
     @classmethod
-    def _traceparent_for_mcp_session(cls, mcp_session_id: str) -> bytes:
-        ctx = cls._span_context_from_mcp_session_id(mcp_session_id)
+    def _traceparent_for_session(cls, session_id: str) -> bytes:
+        ctx = cls._span_context_from_session_id(session_id)
         return f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-01".encode()
 
     @classmethod
-    def _emit_mcp_session_root_span_once(cls, mcp_session_id: str, endpoint: str) -> None:
-        if mcp_session_id in _emitted_session_root_spans:
+    def _emit_session_root_span_once(cls, session_id: str, endpoint: str) -> None:
+        if session_id in _emitted_session_root_spans:
             return
-        _emitted_session_root_spans.add(mcp_session_id)
+        _emitted_session_root_spans.add(session_id)
 
         # tracer.start_span() assigns a random span_id from the provider's
         # IdGenerator, which would mean our deterministic session span_id (used
@@ -241,31 +202,31 @@ class MCPSessionTraceMiddleware:
         if span_processor is None or resource is None:
             return  # not an SDK TracerProvider — nothing to export to
 
-        session_ctx = cls._span_context_from_mcp_session_id(mcp_session_id)
+        session_ctx = cls._span_context_from_session_id(session_id)
         span = SDKSpan(
-            name=f"MCP root, endpoint {endpoint}, session {mcp_session_id}",
+            name=f"Session root, endpoint {endpoint}, session {session_id}",
             context=session_ctx,
             parent=None,
             resource=resource,
             span_processor=span_processor,
             instrumentation_scope=_SESSION_INSTRUMENTATION_SCOPE,
-            attributes={"mcp.mcp_session_id": mcp_session_id, "mcp.endpoint": endpoint},
+            attributes={"session.session_id": session_id, "session.endpoint": endpoint},
         )
         span.start()
         span.end()
 
     @classmethod
-    def _span_context_from_mcp_session_id(cls, mcp_session_id: str) -> SpanContext:
+    def _span_context_from_session_id(cls, session_id: str) -> SpanContext:
         # A uuid4().hex is 32 hex chars = 128 bits, a valid OTel trace_id. Use
         # it directly so the session ID IS the trace ID. Fall back to SHA-256
         # for any non-hex input.
         try:
-            trace_id = int(mcp_session_id, 16) & ((1 << 128) - 1)
-            span_id = int(mcp_session_id[:16], 16) & ((1 << 64) - 1)
+            trace_id = int(session_id, 16) & ((1 << 128) - 1)
+            span_id = int(session_id[:16], 16) & ((1 << 64) - 1)
             if trace_id == 0 or span_id == 0:
                 raise ValueError("invalid session id")
         except ValueError:
-            digest = hashlib.sha256(mcp_session_id.encode()).digest()
+            digest = hashlib.sha256(session_id.encode()).digest()
             trace_id = int.from_bytes(digest[:16])
             span_id = int.from_bytes(digest[16:24])
         return SpanContext(
@@ -273,8 +234,8 @@ class MCPSessionTraceMiddleware:
         )
 
 
-def setup_mcp_tracing(request: Request) -> str:
-    mcp_session_id: str = request.scope[SCOPE_SESSION_ID_KEY]
+def setup_session_tracing(request: Request) -> str:
+    session_id: str = request.scope[SCOPE_SESSION_ID_KEY]
     if settings.LOGFIRE_TOKEN:
-        trace.get_current_span().set_attribute("mcp.mcp_session_id", mcp_session_id)
-    return mcp_session_id
+        trace.get_current_span().set_attribute("session.session_id", session_id)
+    return session_id

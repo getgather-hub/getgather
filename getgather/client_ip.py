@@ -8,6 +8,7 @@ from fastapi import Request
 from loguru import logger
 
 client_ip_var: ContextVar[str | None] = ContextVar("client_ip", default=None)
+request_headers_var: ContextVar[dict[str, str]] = ContextVar("request_headers", default={})
 
 IP_CHECK_URL: Final[str] = "https://api.ipify.org"
 

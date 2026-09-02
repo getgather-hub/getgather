@@ -20,13 +20,13 @@ jobs:
           version: 0.10.7
 
       - name: Build executable
-        run: uv run --group dev pyinstaller remotebrowser-mcp.spec
+        run: uv run --group dev pyinstaller remotebrowser.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: remotebrowser-mcp-linux-x86_64
-          path: dist/remotebrowser-mcp
+          name: remotebrowser-linux-x86_64
+          path: dist/remotebrowser
 
   test:
     needs: package
@@ -39,9 +39,9 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: remotebrowser-mcp-linux-x86_64
+          name: remotebrowser-linux-x86_64
 
-      - run: chmod +x remotebrowser-mcp && ./remotebrowser-mcp &
+      - run: chmod +x remotebrowser && ./remotebrowser &
 
       - name: Run the health check validation
         run: while ! curl -s 'http://localhost:23456/health' | grep 'OK'; do sleep 1; done

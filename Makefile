@@ -24,11 +24,11 @@ check-backend-format:
 
 .PHONY: format-yaml
 format-yaml:
-	uv run yamlfix $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/|mcp-tools\.yaml')
+	uv run yamlfix $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/')
 
 .PHONY: check-yaml-format
 check-yaml-format:
-	uv run yamlfix --check $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/|mcp-tools\.yaml')
+	uv run yamlfix --check $$(find . -type f \( -name '*.yml' -o -name '*.yaml' \) | grep -v -E '\.venv/|node_modules/')
 
 .PHONY: format
 format: format-backend format-yaml format-frontend
@@ -40,15 +40,11 @@ typecheck:
 
 .PHONY: test
 test:
-	uv run pytest -m "not api and not webui and not mcp and not distill"
-
-.PHONY: check-patterns
-check-patterns:
-	uv run python scripts/check_pattern_testids.py
+	uv run pytest -m "not api and not webui"
 
 .PHONY: check
-check: check-backend-format check-yaml-format check-frontend-format typecheck check-patterns
+check: check-backend-format check-yaml-format check-frontend-format typecheck
 
 .PHONY: package
 package:
-	uv run --group dev pyinstaller remotebrowser-mcp.spec
+	uv run --group dev pyinstaller remotebrowser.spec

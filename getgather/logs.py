@@ -14,9 +14,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 if TYPE_CHECKING:
     from loguru import HandlerConfig, Record
 
-from getgather.client_ip import client_ip_var, resolve_client_ip
+from getgather.client_ip import client_ip_var, request_headers_var, resolve_client_ip
 from getgather.config import settings
-from getgather.tracing import logfire_loguru_handler, setup_logfire, setup_mcp_tracing
+from getgather.tracing import logfire_loguru_handler, setup_logfire, setup_session_tracing
 
 
 def setup_logging():
@@ -60,11 +60,6 @@ def _setup_logger():
         "uvicorn",
         "uvicorn.access",
         "uvicorn.error",
-        "fastmcp",
-        "fastmcp.server",
-        "fastmcp.fastmcp.server.auth.oauth_proxy",
-        "fastmcp.fastmcp.server.auth.providers.github",
-        "fastmcp.fastmcp.server.auth.providers.google",
     ):
         lib_logger = logging.getLogger(logger_name)
         lib_logger.handlers.clear()  # Remove existing handlers
@@ -96,27 +91,28 @@ def _setup_sentry():
     )
 
 
-class MCPLoggingContextMiddleware:
-    """Raw ASGI middleware that attaches per-request MCP identifiers to loguru's
-    contextvars so downstream logs carry `mcp_session_id`, and populates `client_ip_var`."""
+class LoggingContextMiddleware:
+    """Raw ASGI middleware that attaches per-request session identifiers to loguru's
+    contextvars so downstream logs carry `session_id`, and populates `client_ip_var`."""
 
     def __init__(self, app: ASGIApp):
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/mcp"):
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
         request = Request(scope, receive)
-        mcp_session_id = setup_mcp_tracing(request)
+        session_id = setup_session_tracing(request)
+        request_headers_var.set(dict(request.headers))
 
         client_ip, ip_source = await resolve_client_ip(request)
         if client_ip:
             client_ip_var.set(client_ip)
             logger.debug(f"[CLIENT IP] {client_ip} (source: {ip_source})")
 
-        context: dict[str, str] = {"mcp_session_id": mcp_session_id}
+        context: dict[str, str] = {"session_id": session_id}
         with logger.contextualize(**context):
-            logger.info(f"[MIDDLEWARE] Processing MCP request to {scope['path']}")
+            logger.info(f"[MIDDLEWARE] Processing request to {scope['path']}")
             await self.app(scope, receive, send)

@@ -16,8 +16,6 @@ dependencies = [
   "fastapi>=0.115.12",
   "uvicorn[standard]>=0.34.2",
   "httpx>=0.28.1",
-  "beautifulsoup4>=4.13.4",
-  "fastmcp>=3.0.0,<4",
   "logfire[fastapi,httpx]>=4.13.2",
   "zendriver>=0.14.2",
   "loguru>=0.7.3",
@@ -44,7 +42,6 @@ dev = [
   "ruff>=0.11.6",
   "ty>=0.0.1a19",
   "yamlfix>=1.6.1",
-  "python-fasthtml>=0.12.21",
   "pyinstaller>=6.19.0",
 ]
 
@@ -60,7 +57,6 @@ packages = ["getgather"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "getgather/webui" = "getgather/webui"
-"getgather/mcp/patterns" = "getgather/mcp/patterns"
 
 [tool.hatch.build]
 only-packages = true

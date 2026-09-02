@@ -1,5 +1,5 @@
 {
-  "name": "remotebrowser-mcp",
+  "name": "remotebrowser",
   "version": "0.0.0",
   "type": "module",
   "volta": {
@@ -16,7 +16,6 @@
     "backend:check:type-safety": "make typecheck",
     "yaml:check:format": "make check-yaml-format",
     "yaml:format": "make format-yaml",
-    "patterns:check:testids": "make check-patterns",
     "check:all": "make check",
     "format": "make format",
     "package": "make package",

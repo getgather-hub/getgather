@@ -1,7 +1,0 @@
-{
-  "rows": "ul li",
-  "columns": [
-    { "name": "title", "selector": "li a" },
-    { "name": "link", "selector": "li a", "attribute": "href" }
-  ]
-}

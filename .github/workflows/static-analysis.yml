@@ -62,17 +62,4 @@ jobs:
         uses: ./.github/actions/prepare-backend
 
       - name: Check YAML formatting
-        run: uv run yamlfix --check $(find . -type f -name '*.yml' -o -name '*.yaml' | grep -v -E '\.venv/|node_modules/|mcp-tools\.yaml')
-
-  pattern-testids:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Prepare back-end environment
-        uses: ./.github/actions/prepare-backend
-
-      - name: Check pattern data-testid convention
-        run: uv run python scripts/check_pattern_testids.py
+        run: uv run yamlfix --check $(find . -type f -name '*.yml' -o -name '*.yaml' | grep -v -E '\.venv/|node_modules/')

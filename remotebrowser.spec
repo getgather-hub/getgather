@@ -2,15 +2,11 @@
 from PyInstaller.utils.hooks import copy_metadata
 
 datas = [
-    ('getgather/mcp/patterns', 'getgather/mcp/patterns'),
-    ('getgather/mcp/mcp-tools.yaml', 'getgather/mcp'),
     ('getgather/webui', 'getgather/webui'),
 ]
 hiddenimports = []
 
 for pkg in [
-    'fastmcp',
-    'mcp',
     'uvicorn',
     'fastapi',
     'pydantic',
@@ -29,7 +25,7 @@ for pkg in [
         pass
 
 a = Analysis(
-    ['remotebrowser-mcp.py'],
+    ['remotebrowser.py'],
     pathex=[],
     binaries=[],
     datas=datas,
@@ -49,7 +45,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='remotebrowser-mcp',
+    name='remotebrowser',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
